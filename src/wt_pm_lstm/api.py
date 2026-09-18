@@ -281,10 +281,14 @@ class _Handler(BaseHTTPRequestHandler):
                 pair.split("=", 1) for pair in (self.path.split("?", 1)[1].split("&") if "?" in self.path else []) if "=" in pair
             )
             try:
+                # Only override the seed when the caller asks for it: the default
+                # must be the detector's own seed, or the batch comes from a
+                # different wind realisation than the model was calibrated on.
+                seed = int(query["seed"]) if "seed" in query else None
                 payload = self.service.sample(
                     fault=query.get("fault", ""),
                     n_samples=int(query.get("n", 432)),
-                    seed=int(query.get("seed", 7)),
+                    seed=seed,
                 )
             except ValueError as exc:
                 self._send(400, {"error": str(exc)})
