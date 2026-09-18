@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wt-pm-lstm-scada-anomaly"
+version = "1.0.0"
+description = "WT-PM model 13: LSTM/GRU sequence autoencoder for wind-turbine SCADA anomaly detection, with a shared, versioned research-platform contract."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "WT-PM" }]
+keywords = ["wind-turbine", "scada", "lstm", "anomaly-detection", "predictive-maintenance"]
+
+# The reference engine is deliberately dependency-light: NumPy is the only
+# hard requirement. The LSTM/GRU forward *and* backward passes are implemented
+# explicitly (see wt_pm_lstm/nn.py) and verified against finite differences, so
+# a result can be reproduced — and the maths audited — without an autodiff
+# runtime, and the engine can run wherever the DAQ runs.
+dependencies = ["numpy>=1.24"]
+
+[project.optional-dependencies]
+# The HTTP API uses the standard library only, so there is no "serve" extra:
+# `wtpm serve` works on a bare install.
+dev = ["pytest>=7.0"]
+torch = ["torch>=2.0"]
+
+[project.scripts]
+wtpm = "wt_pm_lstm.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+filterwarnings = ["error::RuntimeWarning"]

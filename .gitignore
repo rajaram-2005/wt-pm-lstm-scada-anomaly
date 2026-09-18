@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+
+# Test / tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Generated artifacts (model registry, runs, figures, demo data).
+# These are reproducible from `wtpm demo` and must not be committed.
+artifacts/
+runs/
+reports/*.json
+reports/*.md
+!reports/.gitkeep
+data/*.csv
+data/*.npz
+*.log
