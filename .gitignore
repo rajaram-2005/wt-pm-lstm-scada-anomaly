@@ -1,0 +1,9 @@
+__pycache__/
+*.h5
+*.pt
+*.csv
+.env
+.vscode/
+*.ckpt
+*.onnx
+.DS_Store
