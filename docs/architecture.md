@@ -172,7 +172,19 @@ section exists to say so.
 `wtpm serve` exposes the contract over HTTP with the standard library only:
 `POST /score` (JSON samples in, anomaly records out), `GET /schema`,
 `GET /health`, and `GET /sample` (simulator batches, so the contract can be
-exercised end to end without a real SCADA export). Requests are validated
+exercised end to end without a real SCADA export).
+
+Two details make the API trustworthy rather than merely working:
+
+* **Requests are validated against the schema.** Unknown channels, missing
+  channels and too-short batches are rejected with 400 and a reason.
+* **Cold starts cannot raise alarms.** The causal window statistics and the EWMA
+  are undefined for the first samples of a batch, and the head of a batch scored
+  15.4 against a threshold of 11.4 while decaying to 3.3 over 200 samples — so a
+  backfill or a single-shot API call used to alarm in its first hour. Alarms are
+  now suppressed for `max(window, trend_window)` samples while the samples
+  themselves are still scored, and `GET /sample` returns the *tail* of a longer
+  record so a demonstration batch carries real causal history. Requests are validated
 against the schema: unknown channels, missing channels and too-short batches are
 rejected with 400 and a reason, because a silent default for a physical
 measurement is worse than an error.

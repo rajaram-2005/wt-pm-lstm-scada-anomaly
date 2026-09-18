@@ -533,6 +533,24 @@ class Detector:
         sensor_health, stuck_run = self._sensor_health_alarm(values)
         value = float(self.threshold.value if threshold_override is None else threshold_override)
         above = (smoke > value) | sensor_health
+
+        # Warm-up guard. The causal window statistics (trend, sensor health) are
+        # only defined once their window has filled, and the EWMA initialises on
+        # the first sample: the head of *any* batch therefore scores differently
+        # from steady state. On a continuous feed this is invisible, but a
+        # backfill, a re-scored window or a batch API all begin mid-record, and
+        # without this guard every such call reports an alarm in its first hour
+        # (measured: a healthy batch scored 15.4 against a threshold of 11.4 at
+        # sample 0, decaying to 3.3 after ~200 samples). Alarms are suppressed
+        # until the statistics are warm; the samples themselves are still
+        # scored and reported.
+        warmup = max(int(self.cfg.model.window), int(dcfg.trend_window))
+        warm = np.arange(n_steps) < warmup
+        if warm.any():
+            above = above.copy()
+            above[warm] = False
+            sensor_health = sensor_health.copy()
+            sensor_health[warm] = False
         machine = AlarmStateMachine(dcfg.min_consecutive, dcfg.clear_after)
         alarm, events = machine.run(above)
 
@@ -568,6 +586,7 @@ class Detector:
                 "quietness_ratio": quiet_ratio,
                 "stuck_run": stuck_run,
                 "sensor_health_alarm": sensor_health,
+                "warmup": warm,
                 "signed_z": signed_ts,
             },
             count=count,

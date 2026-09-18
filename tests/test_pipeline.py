@@ -195,3 +195,47 @@ def test_early_stopping_checkpoint_is_actually_used(tiny_cfg):
     # And the deployed weights are finite and non-trivial.
     assert np.isfinite(model.params["enc.W_ih"]).all()
     assert np.abs(model.params["enc.W_ih"]).sum() > 0.0
+
+
+def test_warmup_guard_suppresses_cold_start_alarms():
+    """A batch that begins mid-record must not alarm on its own warm-up.
+
+    The causal window statistics and the EWMA are undefined for the first few
+    samples of any batch, so a backfill or a batch API call used to report an
+    alarm in its first hour purely because the score had not settled.
+    """
+    import numpy as np
+
+    from wt_pm_lstm.api import ScoringService
+
+    cfg = RunConfig()
+    cfg.data.n_days = 8
+    cfg.model.epochs = 2
+    cfg.model.n_ensemble = 1
+    cfg.detect.bootstrap_samples = 5
+    service = ScoringService(cfg=cfg)
+
+    warmup = max(cfg.model.window, cfg.detect.trend_window)
+    healthy = service.sample(n_samples=288)
+    timeline = service._timeline_from_payload(healthy)
+    result = service.detector.score_timeline(timeline, stride=1)
+    assert not result.alarm[:warmup].any(), "cold-start samples must not alarm"
+    assert result.components["warmup"][:warmup].all()
+    assert not result.components["warmup"][warmup:].any()
+
+
+def test_sampled_batch_has_history_behind_it():
+    """The demo batch is the tail of a longer record, not a cold start."""
+    from wt_pm_lstm.api import ScoringService
+
+    cfg = RunConfig()
+    cfg.data.n_days = 8
+    cfg.model.epochs = 2
+    cfg.model.n_ensemble = 1
+    service = ScoringService(cfg=cfg)
+    batch = service.sample(fault="bearing_wear", n_samples=288)
+    assert len(batch["samples"]) == 288
+    assert batch["injected_fault"] == "bearing_wear"
+    assert 0 < batch["fault_starts_at_sample"] < 288
+    # The fault is inside the returned window, and every channel is present.
+    assert all(len(s) >= 13 for s in batch["samples"])

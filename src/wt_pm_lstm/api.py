@@ -96,32 +96,46 @@ class ScoringService:
         payload["engine"] = self.cfg.engine
         return payload
 
-    def sample(self, fault: str = "", n_samples: int = 432, seed: int = 7) -> Dict[str, Any]:
+    def sample(self, fault: str = "", n_samples: int = 432, seed: Optional[int] = None) -> Dict[str, Any]:
         """Return a contract-shaped sample batch straight from the simulator.
 
         Exists so the contract can be demonstrated end to end without a real
         SCADA export: the caller receives samples *and* the injected ground
         truth, and can check the detector's answer against it.
+
+        The batch is the **tail of a longer record**, so its causal state is
+        real history rather than a cold start — which is what a monitoring
+        deployment always has and what a naive synthetic batch would not. The
+        wind realisation uses the detector's own configured seed unless one is
+        given, so the batch comes from the same statistical process the model
+        was calibrated on.
         """
         from wt_pm_lstm.simulate import FAULT_KINDS, SENSOR_FAULT_TARGETS, FaultSpec, simulate_timeline
 
         dcfg = self.cfg.data
-        n = int(max(self.cfg.model.window + self.cfg.detect.trend_window + 12, n_samples))
+        n_samples = int(max(self.cfg.model.window + 12, n_samples))
+        history = 3 * max(self.cfg.model.window, self.cfg.detect.trend_window)
+        total = n_samples + history
         specs = []
+        onset_in_batch = None
         if fault:
             if fault not in FAULT_KINDS:
                 raise ValueError(f"unknown fault {fault!r}; expected one of {list(FAULT_KINDS)}")
-            onset = int(n * 0.55)
+            onset_in_batch = int(n_samples * 0.55)
+            onset = history + onset_in_batch
             specs.append(
                 FaultSpec(
                     kind=fault,
                     onset_step=onset,
-                    duration_steps=max(24, n - onset - 2),
+                    duration_steps=max(24, total - onset - 2),
                     magnitude=1.0,
                     channel=str(SENSOR_FAULT_TARGETS.get(fault, ("",))[0]) if fault in SENSOR_FAULT_TARGETS else "",
                 )
             )
-        timeline = simulate_timeline(_data_config_copy(dcfg, seed=seed, n_steps=n), fault_specs=specs)
+        timeline = simulate_timeline(
+            _data_config_copy(dcfg, seed=self.cfg.data.seed if seed is None else seed, n_steps=total),
+            fault_specs=specs,
+        )
         keep = slice(timeline.n_steps - n_samples, timeline.n_steps)
         samples = []
         for i in range(timeline.n_steps)[keep]:
@@ -136,10 +150,11 @@ class ScoringService:
             "schema_version": SCHEMA_VERSION,
             "turbine_id": "WT-SIM",
             "injected_fault": fault or None,
-            "fault_starts_at_sample": (int(n_samples * 0.55) if fault else None),
+            "fault_starts_at_sample": onset_in_batch,
             "note": (
                 "samples are produced by the physics-informed simulator and are meant to be "
-                "posted back to /score; they are not field data"
+                "posted back to /score; they are not field data. The batch is the tail of a "
+                "longer record, so its causal state is real history."
             ),
             "samples": samples,
             "fault_label": labels,
