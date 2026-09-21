@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WT-PM — 25 models. One product.</title>
+  <style>
+    :root {
+      --bg: #05080c;
+      --ink: #e8f4f2;
+      --muted: #8aa4a8;
+      --teal: #2ee6c8;
+      --amber: #f0b429;
+      --line: rgba(46, 230, 200, 0.18);
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: var(--bg); color: var(--ink); font-family: "Segoe UI", system-ui, sans-serif; }
+    a { color: var(--teal); text-decoration: none; }
+    header.hero {
+      position: relative; min-height: 92vh; display: grid; place-items: end start;
+      overflow: hidden;
+    }
+    header.hero img.bg {
+      position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover;
+      filter: saturate(1.05) contrast(1.05);
+    }
+    header.hero .veil {
+      position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(5,8,12,.15) 0%, rgba(5,8,12,.85) 70%, #05080c 100%);
+    }
+    .copy { position: relative; padding: 4rem 8vw 5rem; max-width: 52rem; }
+    .kicker { letter-spacing: .28em; text-transform: uppercase; color: var(--teal); font-size: .72rem; }
+    h1 { font-size: clamp(2.4rem, 5vw, 4.4rem); line-height: 1.05; margin: .4rem 0 1rem; font-weight: 650; }
+    h1 span { color: var(--teal); }
+    .lede { font-size: 1.15rem; color: #c9ddd9; max-width: 38rem; }
+    .cta { display: flex; gap: .8rem; margin-top: 1.6rem; flex-wrap: wrap; }
+    .btn {
+      border: 1px solid var(--teal); background: var(--teal); color: #04231e;
+      padding: .7rem 1.2rem; border-radius: 999px; font-weight: 650;
+    }
+    .btn.ghost { background: transparent; color: var(--ink); }
+    nav {
+      position: absolute; top: 0; left: 0; right: 0; z-index: 2;
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 1.2rem 8vw; font-size: .9rem;
+    }
+    nav strong { letter-spacing: .12em; }
+    section { padding: 4.5rem 8vw; }
+    h2 { font-size: 2rem; margin: 0 0 1rem; }
+    .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 1.2rem; }
+    figure { margin: 0; border: 1px solid var(--line); border-radius: 14px; overflow: hidden; background: #0b1216; }
+    figure img { width: 100%; height: 220px; object-fit: cover; display: block; }
+    figure figcaption { padding: .85rem 1rem 1.1rem; color: var(--muted); font-size: .9rem; }
+    figure figcaption b { display: block; color: var(--ink); margin-bottom: .25rem; }
+    .models {
+      display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: .55rem;
+      font-size: .82rem;
+    }
+    .models div {
+      border: 1px solid var(--line); padding: .55rem .7rem; border-radius: 8px; color: #b7d0cc;
+    }
+    .models div em { color: var(--amber); font-style: normal; font-size: .7rem; letter-spacing: .08em; }
+    footer { padding: 2rem 8vw 4rem; color: var(--muted); border-top: 1px solid var(--line); font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <header class="hero">
+    <img class="bg" src="hero-control-room.png" alt="AeroVigil WT-PM control room — 25 models on one wall" />
+    <div class="veil"></div>
+    <nav>
+      <strong>WT-PM</strong>
+      <span>25 models · one CLI · one writeback</span>
+    </nav>
+    <div class="copy">
+      <div class="kicker">Product launch</div>
+      <h1>Twenty-five specialists.<br /><span>One product.</span></h1>
+      <p class="lede">
+        LSTM, GRU, VAE, Deep SVDD, isolation forest, TCN, Informer, CNN, GNN,
+        RUL, TinyML, SHAP — fused into a single SCADA writeback:
+        <b>WTPM.ALARM / SCORE / RUL_H</b>. Not twenty-five dashboards.
+      </p>
+      <div class="cta">
+        <a class="btn" href="#stack">See the stack</a>
+        <a class="btn ghost" href="#models">All 25 models</a>
+      </div>
+    </div>
+  </header>
+
+  <section id="stack">
+    <h2>Launch stills</h2>
+    <div class="grid">
+      <figure>
+        <img src="product-one-stack.png" alt="Single WT-PM appliance" />
+        <figcaption><b>One stack</b> The 25 research repos collapse into one appliance face — one fused mark.</figcaption>
+      </figure>
+      <figure>
+        <img src="models-mosaic.png" alt="25 model mosaic fused at the centre" />
+        <figcaption><b>25 → 1</b> Anomaly, classification, RUL, physics, edge — one centre of gravity.</figcaption>
+      </figure>
+      <figure>
+        <img src="fleet-night.png" alt="Night wind farm with one brain" />
+        <figcaption><b>Fleet as one brain</b> Edge glow on every nacelle, one cloud fusion node.</figcaption>
+      </figure>
+      <figure>
+        <img src="operator-tablet.png" alt="Operator tablet with one WT-PM app" />
+        <figcaption><b>Field UI</b> One app. One risk score. Not twenty-five logins.</figcaption>
+      </figure>
+      <figure>
+        <img src="edge-relay.png" alt="TinyML safety relay in the nacelle" />
+        <figcaption><b>SIL on the rail</b> m25 hard limits still drop overspeed before SCADA write.</figcaption>
+      </figure>
+      <figure>
+        <img src="hero-control-room.png" alt="Control room wall" />
+        <figcaption><b>Control room</b> Operators see the fused wall, turbines on the ridge.</figcaption>
+      </figure>
+    </div>
+  </section>
+
+  <section id="models">
+    <h2>The 25, still named</h2>
+    <p style="color:var(--muted);max-width:40rem">Under the hood they stay specialized. The product is the router, fusion, Hermes loop, and WTPM.* tags.</p>
+    <div class="models">
+      <div><em>ANOMALY</em><br/>LSTM SCADA · GRU · VAE · Deep SVDD · Isolation forest · TCN power curve · Informer</div>
+      <div><em>CLASSIFY</em><br/>1D-CNN bearing · contrastive SSL · GNN cascade · RF · SVM stator · XGBoost</div>
+      <div><em>RUL</em><br/>ConvLSTM · DBN · HMM states · MLP hours · particle filter</div>
+      <div><em>EDGE / XAI</em><br/>AeroZip · MobileNet INT8 · TinyML safety relay · digital twin · PG-BNN · SHAP</div>
+    </div>
+  </section>
+
+  <section>
+    <h2>Ship it</h2>
+    <pre style="background:#0b1216;border:1px solid var(--line);padding:1.2rem;border-radius:12px;overflow:auto;color:#cde">pip install -e platform
+wt-pm inspect
+wt-pm scada --demo
+wt-pm sil --rpm 26.5 --pitch 5</pre>
+  </section>
+  <footer>WT-PM · rajaram-2005 · launch photos are generated product art, not a live plant.</footer>
+</body>
+</html>
