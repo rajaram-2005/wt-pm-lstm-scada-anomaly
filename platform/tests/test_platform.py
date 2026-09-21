@@ -312,6 +312,51 @@ def test_ece_perfect_calibration_is_zero():
     assert expected_calibration_error(y, p) < 0.05
 
 
+def test_sensor_quality_flags_freeze():
+    from wtpm_platform.advanced import SensorQualityMonitor
+    b = synth_batch(200)
+    b.values[:, list(CHANNELS).index("bearing_vib_rms_mm_s")] = 2.0  # frozen
+    q = SensorQualityMonitor(freeze_steps=10).run(b)
+    kinds = {f["kind"] for f in q["flags"]}
+    assert "freeze" in kinds
+    assert q["trust"] < 1.0
+
+
+def test_alert_hysteresis_and_ack():
+    from wtpm_platform.advanced import AlertManager
+    am = AlertManager(raise_at=3.0, clear_at=2.0, hold=3)
+    n1 = am.update("WT", 4.0, 80, "CONTINUE", "bearing_wear", 1)
+    assert n1 and n1[0].severity in ("high", "critical", "warning")
+    assert not am.update("WT", 4.1, 80, "CONTINUE", "bearing_wear", 2)  # already active
+    am.update("WT", 0.5, 10, "CONTINUE", "healthy", 3)
+    am.update("WT", 0.5, 10, "CONTINUE", "healthy", 4)
+    am.update("WT", 0.5, 10, "CONTINUE", "healthy", 5)
+    assert not am.snapshot()["active"]
+    am2 = AlertManager()
+    a = am2.update("WT", 5.0, 90, "TRIP", "bearing_wear", 1)[0]
+    assert am2.ack(a.alert_id)
+
+
+def test_work_order_and_cost_model():
+    from wtpm_platform.advanced import MaintenancePlanner, CostRiskOptimizer
+    from wtpm_platform.engines import Diagnosis
+    d = Diagnosis(fault="bearing_wear", subsystem="drivetrain", confidence=0.8,
+                  votes={}, per_class_prob={}, conflicting=False)
+    wo = MaintenancePlanner().plan(d, 40.0, 75, "INSPECT")
+    assert wo["priority"] == "P1"
+    assert wo["estimated_cost_eur"] > 0
+    c = CostRiskOptimizer().choose(75, 40.0, "INSPECT", wo)
+    assert c["recommended"] in c["expected_cost_eur"]
+
+
+def test_health_index_drops_with_anomaly():
+    from wtpm_platform.advanced import health_index
+    n = 50
+    h = health_index(np.linspace(0, 6, n), np.zeros(n), np.full(n, 400.0))
+    assert h["now"] < 90
+    assert len(h["series"]) > 0
+
+
 def test_drift_report_flags_shift():
     from wtpm_platform.evaluation import drift_report
     rng = np.random.default_rng(0)

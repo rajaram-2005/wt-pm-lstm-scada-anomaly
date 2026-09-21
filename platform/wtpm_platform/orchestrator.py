@@ -32,6 +32,10 @@ from wtpm_platform.engines import (
     RULManager, SafetyManager, UncertaintyEngine, XAIEngine,
 )
 from wtpm_platform.fusion import FusionConfig, FusionEngine
+from wtpm_platform.advanced import (
+    AlertManager, CostRiskOptimizer, DecisionAuditLog, MaintenancePlanner,
+    SensorQualityMonitor, downsample_series, health_index,
+)
 
 
 def build_default_registry() -> ModelRegistry:
@@ -231,6 +235,11 @@ class Orchestrator:
         self.safety = SafetyManager(self.registry)
         self.twin = DigitalTwinInterface(self.registry)
         self.edge = EdgeInferenceManager(self.registry)
+        self.alerts = AlertManager()
+        self.quality = SensorQualityMonitor()
+        self.planner = MaintenancePlanner()
+        self.costing = CostRiskOptimizer()
+        self.audit = DecisionAuditLog()
 
     # -- data prep -----------------------------------------------------------
     def prepare(self, batch: SensorBatch) -> SensorBatch:
@@ -251,12 +260,7 @@ class Orchestrator:
         if lab is not None:
             train_mask &= np.asarray(lab).astype(int) == 0
 
-        routed = self.router.route(ctx, batch)
-        wanted = set(model_ids) if model_ids else set(
-            sum(routed.values(), [])
-        ) | {"m25-tinyml-safety", "m19-digital-twin", "m21-xai-shap",
-             "m16-particle-filter-rul", "m23-aerozip", "m08-contrastive-ssl",
-             "m09-dbn-features"}
+        wanted = set(model_ids) if model_ids else set(self.registry.ids())
         status: Dict[str, str] = {}
         for mid in sorted(wanted):
             if mid not in self.registry:
@@ -340,6 +344,48 @@ class Orchestrator:
         # ACTION
         action = self._recommend(diagnosis, degradation, rul_out, risk, safety)
 
+        # ---- advanced ops layer ----
+        quality = self.quality.run(batch)
+        fused_arr = None if fused is None else fused.score
+        deg_arr = None if degradation is None or not degradation.ok else degradation.degradation_state
+        rul_arr = None if rul_out is None or not rul_out.ok else rul_out.rul_hours
+        vib = batch.channel("bearing_vib_rms_mm_s") if "bearing_vib_rms_mm_s" in batch.channel_names else None
+        hidx = health_index(fused_arr, deg_arr, rul_arr, vib)
+        rul_now = None if rul_out is None or not rul_out.ok else float(rul_out.rul_hours[-1])
+        work_order = self.planner.plan(diagnosis, rul_now, risk, safety["decision"])
+        costing = self.costing.choose(risk, rul_now, safety["decision"], work_order)
+        action["cost_optimal"] = costing["recommended"]
+        action["cost_model"] = costing
+        new_alerts = self.alerts.update(
+            batch.turbine_id,
+            0.0 if fused is None else float(fused.score[-1]),
+            risk, safety["decision"], diagnosis.fault, int(batch.timestamps[-1]))
+        twin_derate = self.twin.maintenance_scenario(
+            batch, rul_out, derate_pct=20.0) if self.twin._twin() else {"error": "twin unfitted"}
+        physics = {}
+        if "physics_power_residual_kw" in batch.feature_names:
+            pr = batch.features[:, list(batch.feature_names).index("physics_power_residual_kw")]
+            physics = {
+                "power_residual_kw_now": round(float(pr[-1]), 3),
+                "power_residual_kw_mean": round(float(np.mean(pr)), 3),
+                "series": downsample_series(pr),
+            }
+        series = {
+            "fused_score": [] if fused is None else downsample_series(fused.score),
+            "health_index": hidx["series"],
+            "rul_hours": [] if rul_arr is None else downsample_series(rul_arr),
+            "vibration": [] if vib is None else downsample_series(vib),
+            "oil_temp": downsample_series(batch.channel("gearbox_oil_temp_c"))
+            if "gearbox_oil_temp_c" in batch.channel_names else [],
+            "power_kw": downsample_series(batch.channel("power_kw"))
+            if "power_kw" in batch.channel_names else [],
+            "stride": hidx["stride"],
+        }
+        self.audit.record("analyse", {
+            "turbine_id": batch.turbine_id, "fault": diagnosis.fault,
+            "risk": risk, "action": action["action"], "safety": safety["decision"],
+        })
+
         result = {
             "schema_version": "wt-pm.platform.v1",
             "turbine_id": batch.turbine_id,
@@ -404,6 +450,15 @@ class Orchestrator:
                 }
                 for mid, o in rep_sup.outputs.items()
             },
+            "health_index": hidx,
+            "sensor_quality": quality,
+            "work_order": work_order,
+            "cost_risk": costing,
+            "alerts": {"raised_now": [a.__dict__ for a in new_alerts],
+                       **self.alerts.snapshot()},
+            "physics": physics,
+            "what_if_derate_20pct": twin_derate,
+            "series": series,
             "pipeline_ms": round((time.perf_counter() - t_start) * 1000, 1),
         }
         problems = WTDataSchema.validate({

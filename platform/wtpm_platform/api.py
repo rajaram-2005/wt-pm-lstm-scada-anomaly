@@ -1,10 +1,8 @@
-"""HTTP API + dashboard for the unified platform (stdlib only, like model 05).
+"""HTTP API + operator dashboard for the unified platform (stdlib only).
 
-  GET  /health      liveness + per-adapter availability
-  GET  /registry    the full model registry table
-  GET  /plan        edge deployment plan
-  POST /analyse     {"days": float, "seed": int} -> full 7-question record
-  GET  /            dashboard
+  GET  /health /registry /plan /last /audit /alerts
+  POST /analyse  /what-if  /alerts/ack  /feedback
+  GET  /         dashboard
 """
 
 from __future__ import annotations
@@ -12,12 +10,14 @@ from __future__ import annotations
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import Any, Dict, Optional
+from typing import Any, Dict
+from urllib.parse import urlparse
 
 import numpy as np
 
 _STATE: Dict[str, Any] = {"orchestrator": None, "batch": None, "last": None,
-                          "fitted": False, "lock": threading.Lock()}
+                          "fitted": False, "lock": threading.Lock(),
+                          "feedback": []}
 
 
 def _json_default(o):
@@ -48,20 +48,29 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
 
-    def log_message(self, *a):  # quiet
+    def log_message(self, *a):
         pass
 
+    def do_OPTIONS(self):
+        self.send_response(204)
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.end_headers()
+
     def do_GET(self):
+        path = urlparse(self.path).path
         orch = _STATE["orchestrator"]
-        if self.path == "/health":
+        if path == "/health":
             self._send(200, {
                 "status": "ok" if _STATE["fitted"] else "starting",
                 "models": None if orch is None else orch.registry.health_report(),
             })
-        elif self.path == "/registry":
+        elif path == "/registry":
             if orch is None:
                 return self._send(503, {"error": "starting"})
             self._send(200, [
@@ -73,70 +82,256 @@ class Handler(BaseHTTPRequestHandler):
                  "deployment": [d.value for d in s.deployment_targets],
                  "fallback": s.fallback, "notes": s.notes}
                 for s in orch.registry.specs()])
-        elif self.path == "/plan":
+        elif path == "/plan":
             if orch is None:
                 return self._send(503, {"error": "starting"})
             self._send(200, orch.edge.deployment_plan())
-        elif self.path == "/last":
+        elif path == "/last":
             self._send(200, _STATE["last"] or {"info": "POST /analyse first"})
-        elif self.path == "/":
+        elif path == "/audit":
+            if orch is None:
+                return self._send(503, {"error": "starting"})
+            self._send(200, orch.audit.all())
+        elif path == "/alerts":
+            if orch is None:
+                return self._send(503, {"error": "starting"})
+            self._send(200, orch.alerts.snapshot())
+        elif path == "/":
             self._send(200, DASHBOARD.encode(), "text/html")
         else:
             self._send(404, {"error": "unknown path"})
 
+    def _read_json(self) -> Dict[str, Any]:
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if not length:
+            return {}
+        return json.loads(self.rfile.read(length) or b"{}")
+
     def do_POST(self):
-        if self.path != "/analyse":
-            return self._send(404, {"error": "unknown path"})
+        path = urlparse(self.path).path
         if not _STATE["fitted"]:
             return self._send(503, {"error": "models still fitting, retry shortly"})
-        length = int(self.headers.get("Content-Length", 0) or 0)
         try:
-            payload = json.loads(self.rfile.read(length) or b"{}")
+            payload = self._read_json()
         except json.JSONDecodeError:
             return self._send(400, {"error": "invalid JSON"})
+
         with _STATE["lock"]:
             orch, ctx = _STATE["orchestrator"], _STATE["ctx"]
             batch = _STATE["batch"]
-            if payload.get("seed") is not None:
-                from wtpm_platform.cli import _make_batch
-                batch = orch.prepare(_make_batch(
-                    float(payload.get("days", 10.0)), seed=int(payload["seed"]),
-                    turbine_id=payload.get("turbine_id", "WT-live")))
-            result = orch.analyse(batch, ctx)
-            _STATE["last"] = result
-        self._send(200, result)
+
+            if path == "/analyse":
+                if payload.get("seed") is not None:
+                    from wtpm_platform.cli import _make_batch
+                    batch = orch.prepare(_make_batch(
+                        float(payload.get("days", 10.0)), seed=int(payload["seed"]),
+                        turbine_id=payload.get("turbine_id", "WT-live")))
+                    _STATE["batch"] = batch
+                if payload.get("fusion_method"):
+                    orch.fusion.cfg.method = str(payload["fusion_method"])
+                result = orch.analyse(batch, ctx)
+                _STATE["last"] = result
+                return self._send(200, result)
+
+            if path == "/what-if":
+                overrides = payload.get("overrides") or {}
+                derate = float(payload.get("derate_pct", 0) or 0)
+                if derate:
+                    rpm = float(np.mean(batch.channel("rotor_speed_rpm")))
+                    overrides["rotor_speed_rpm"] = rpm * (1 - derate / 100)
+                res = orch.twin.what_if(batch, {k: float(v) for k, v in overrides.items()})
+                orch.audit.record("what-if", {"overrides": overrides})
+                return self._send(200, res)
+
+            if path == "/alerts/ack":
+                ok = orch.alerts.ack(str(payload.get("alert_id", "")))
+                orch.audit.record("ack", {"alert_id": payload.get("alert_id"), "ok": ok})
+                return self._send(200, {"ok": ok})
+
+            if path == "/feedback":
+                row = {"fault": payload.get("fault"),
+                       "correct": bool(payload.get("correct", True)),
+                       "note": payload.get("note", "")}
+                _STATE["feedback"].append(row)
+                orch.audit.record("operator_feedback", row)
+                return self._send(200, {"stored": len(_STATE["feedback"])})
+
+        self._send(404, {"error": "unknown path"})
 
 
-DASHBOARD = """<!DOCTYPE html><html><head><meta charset='utf-8'>
-<title>WT-PM Unified Platform</title><style>
-body{font-family:system-ui;background:#0b1020;color:#dce4f5;margin:0;padding:24px}
-h1{font-size:22px} .card{background:#121a30;border:1px solid #24304f;border-radius:12px;
-padding:16px;margin:12px 0} button{background:#4cc9f0;border:0;border-radius:8px;
-padding:8px 18px;font-weight:700;cursor:pointer} pre{white-space:pre-wrap;font-size:12px;
-color:#8ea0c4;max-height:420px;overflow:auto} .big{font-size:30px;font-weight:800}
-.row{display:flex;gap:14px;flex-wrap:wrap} .kv{background:#0f1628;border-radius:8px;
-padding:10px 14px} .kv b{color:#4cc9f0;display:block;font-size:11px;text-transform:uppercase}
-</style></head><body>
-<h1>WT-PM Unified Platform — all 25 models connected</h1>
-<div class=card><button onclick="run()">Run full analysis</button>
- <span id=status></span>
-<div class=row id=summary></div></div>
-<div class=card><b>Model health</b><pre id=health>loading…</pre></div>
-<div class=card><b>Full record</b><pre id=out>—</pre></div>
+DASHBOARD = r"""<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>WT-PM Command Center</title>
+<style>
+:root{--bg:#070b16;--card:#10182c;--line:#24304f;--txt:#dce4f5;--mut:#8ea0c4;--acc:#4cc9f0;--ok:#3ddc97;--warn:#f4c95d;--bad:#ff6b6b}
+*{box-sizing:border-box} body{margin:0;background:var(--bg);color:var(--txt);font-family:ui-sans-serif,system-ui;padding:18px}
+h1{font-size:20px;margin:0 0 4px} h2{font-size:13px;letter-spacing:.08em;text-transform:uppercase;color:var(--mut);margin:0 0 10px}
+.sub{color:var(--mut);font-size:12px;margin-bottom:14px}
+.grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+.span2{grid-column:span 2}.span3{grid-column:span 3}.span4{grid-column:span 4}.span6{grid-column:span 6}.span8{grid-column:span 8}.span12{grid-column:span 12}
+@media(max-width:900px){.span2,.span3,.span4,.span6,.span8{grid-column:span 12}}
+.kpi{font-size:28px;font-weight:800;letter-spacing:-.03em}
+.kpi small{display:block;font-size:11px;font-weight:600;color:var(--mut);letter-spacing:.08em;text-transform:uppercase}
+button,select,input{background:#1a2540;color:var(--txt);border:1px solid var(--line);border-radius:8px;padding:8px 12px;font:inherit}
+button.pri{background:var(--acc);color:#071018;font-weight:800;border:0;cursor:pointer}
+button.pri:disabled{opacity:.5} canvas{width:100%;height:88px;display:block}
+.pill{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11px;font-weight:700}
+.ok{background:#123;color:var(--ok)}.bad{background:#311;color:var(--bad)}.warn{background:#332;color:var(--warn)}
+.models{display:flex;flex-wrap:wrap;gap:6px}
+.models i{font-style:normal;font-size:10px;background:#0c1324;border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+table{width:100%;border-collapse:collapse;font-size:12px} td,th{padding:6px 8px;border-bottom:1px solid var(--line);text-align:left;color:var(--mut)}
+.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:220px;overflow:auto;margin:0}
+</style></head>
+<body>
+<h1>WT-PM Command Center</h1>
+<div class="sub">25 connected models · fusion · digital twin · safety · maintenance economics</div>
+<div class="row">
+  <button class="pri" id="go" onclick="run()">Run full analysis</button>
+  <select id="fusion">
+    <option value="confidence_weighted">fusion: confidence-weighted</option>
+    <option value="weighted">fusion: weighted</option>
+    <option value="median">fusion: median</option>
+    <option value="max">fusion: max</option>
+  </select>
+  <button onclick="whatif()">What-if derate 20%</button>
+  <span id="status" class="sub"></span>
+</div>
+<div class="grid">
+  <div class="card span2"><small class="kpi"><small>fault</small><span id="k_fault">—</span></small></div>
+  <div class="card span2"><small class="kpi"><small>subsystem</small><span id="k_sub">—</span></small></div>
+  <div class="card span2"><small class="kpi"><small>risk</small><span id="k_risk">—</span></small></div>
+  <div class="card span2"><small class="kpi"><small>health</small><span id="k_hi">—</span></small></div>
+  <div class="card span2"><small class="kpi"><small>RUL h</small><span id="k_rul">—</span></small></div>
+  <div class="card span2"><small class="kpi"><small>safety</small><span id="k_safe">—</span></small></div>
+
+  <div class="card span8">
+    <h2>Health / fused anomaly / vibration</h2>
+    <canvas id="c1"></canvas>
+    <canvas id="c2"></canvas>
+  </div>
+  <div class="card span4">
+    <h2>Seven questions</h2>
+    <table id="q7"></table>
+  </div>
+
+  <div class="card span4">
+    <h2>Work order</h2>
+    <div id="wo">Run analysis first.</div>
+  </div>
+  <div class="card span4">
+    <h2>Cost-risk (48h heuristic)</h2>
+    <div id="cost">—</div>
+  </div>
+  <div class="card span4">
+    <h2>Sensor trust</h2>
+    <div id="qual">—</div>
+  </div>
+
+  <div class="card span6">
+    <h2>Alerts</h2>
+    <div id="alerts">—</div>
+  </div>
+  <div class="card span6">
+    <h2>Why (SHAP + physics)</h2>
+    <div id="why">—</div>
+  </div>
+
+  <div class="card span12">
+    <h2>25-model engine</h2>
+    <div class="models" id="models"></div>
+  </div>
+  <div class="card span12">
+    <h2>Operator feedback</h2>
+    <div class="row">
+      <input id="fb_note" placeholder="note (optional)" style="flex:1">
+      <button onclick="feedback(true)">Confirm diagnosis</button>
+      <button onclick="feedback(false)">Reject diagnosis</button>
+    </div>
+    <pre id="audit">audit trail loads after analysis</pre>
+  </div>
+</div>
 <script>
-async function health(){const r=await fetch('/health');document.getElementById('health').textContent=JSON.stringify(await r.json(),null,1)}
+const $=id=>document.getElementById(id);
+function spark(canvas, series, color){
+  const ctx=canvas.getContext('2d'); const w=canvas.width=canvas.clientWidth*2; const h=canvas.height=88*2;
+  ctx.clearRect(0,0,w,h); if(!series||!series.length) return;
+  const mn=Math.min(...series), mx=Math.max(...series); const span=(mx-mn)||1;
+  ctx.strokeStyle=color; ctx.lineWidth=2; ctx.beginPath();
+  series.forEach((v,i)=>{const x=i/(series.length-1)*w; const y=h-8-((v-mn)/span)*(h-16);
+    i?ctx.lineTo(x,y):ctx.moveTo(x,y);}); ctx.stroke();
+}
+function pill(ok,t){return `<span class="pill ${ok}">${t}</span>`}
+async function health(){
+  const r=await fetch('/health'); const d=await r.json();
+  const mods=d.models||[];
+  $('models').innerHTML=mods.map(m=>`<i class="${m.fitted?'ok':'bad'}">${m.model_id}${m.fitted?' ✓':''}</i>`).join('');
+  $('status').textContent=d.status==='ok'?' models ready':' fitting models…';
+}
 async function run(){
- document.getElementById('status').textContent=' running…';
- const r=await fetch('/analyse',{method:'POST',body:'{}'});const d=await r.json();
- document.getElementById('status').textContent=' done in '+d.pipeline_ms+' ms';
- const s=document.getElementById('summary');
- const kv=(k,v)=>`<div class=kv><b>${k}</b><span class=big>${v}</span></div>`;
- s.innerHTML=kv('fault',d.what.fault)+kv('subsystem',d.where.subsystem)
-  +kv('risk',d.risk_score)+kv('RUL h',d.rul.hours??'—')
-  +kv('action',d.action.action)+kv('safety',d.safety.decision);
- document.getElementById('out').textContent=JSON.stringify(d,null,1);}
+  $('go').disabled=true; $('status').textContent=' running 25-model pipeline…';
+  const r=await fetch('/analyse',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({fusion_method:$('fusion').value})});
+  const d=await r.json(); render(d); $('go').disabled=false;
+}
+function render(d){
+  $('status').textContent=` done in ${d.pipeline_ms} ms · ${ (d.model_health.ran||[]).length }/25 models`;
+  $('k_fault').textContent=d.what.fault;
+  $('k_sub').textContent=d.where.subsystem;
+  $('k_risk').textContent=d.risk_score;
+  $('k_hi').textContent=(d.health_index&&d.health_index.now)!=null?d.health_index.now:'—';
+  $('k_rul').textContent=d.rul.hours??'—';
+  $('k_safe').textContent=d.safety.decision;
+  spark($('c1'), (d.series||{}).health_index||[], '#3ddc97');
+  spark($('c2'), (d.series||{}).fused_score||[], '#4cc9f0');
+  $('q7').innerHTML=`
+    <tr><th>What</th><td>${d.what.fault} (${d.what.fault_confidence})</td></tr>
+    <tr><th>Where</th><td>${d.where.subsystem}</td></tr>
+    <tr><th>Why</th><td>${Object.keys((d.why||{}).contributing_features||{}).slice(0,3).join(', ')||'—'}</td></tr>
+    <tr><th>Severity</th><td>state ${d.severity.degradation_state}</td></tr>
+    <tr><th>How long</th><td>${d.rul.hours} h ± ${d.rul.uncertainty_hours} via ${d.rul.source}</td></tr>
+    <tr><th>What next</th><td>${d.action.action} / cost-opt ${d.action.cost_optimal||''}</td></tr>
+    <tr><th>Safe?</th><td>${d.safety.decision}</td></tr>`;
+  const wo=d.work_order||{};
+  $('wo').innerHTML=`<b>${wo.work_order_id||''}</b> ${pill(wo.priority==='P1'?'bad':'warn', wo.priority||'')}
+    <div>${wo.fault} · ${wo.subsystem}</div>
+    <div>window ${wo.window_hours} h · €${wo.estimated_cost_eur}</div>
+    <div class="sub">${JSON.stringify(wo.parts||{})}</div>`;
+  const c=d.cost_risk||{};
+  $('cost').innerHTML=`recommend <b>${c.recommended||'—'}</b> · P(fail 48h)=${c.p_fail_48h}
+    <pre>${JSON.stringify(c.expected_cost_eur||{},null,1)}</pre>`;
+  const q=d.sensor_quality||{};
+  $('qual').innerHTML=`trust ${q.trust} · flags ${q.n_flags}
+    <pre>${(q.flags||[]).slice(0,6).map(f=>f.kind+' '+f.channel).join('\\n')||'none'}</pre>`;
+  const al=(d.alerts&&d.alerts.active)||[];
+  $('alerts').innerHTML=al.length?al.map(a=>`${pill(a.severity==='critical'?'bad':'warn',a.severity)} ${a.message}
+     <button onclick="ack('${a.alert_id}')">ack</button>`).join('<br>'):'no active alerts';
+  const shap=d.why&&d.why.contributing_features||{};
+  $('why').innerHTML=`<pre>${JSON.stringify(shap,null,1)}</pre>
+     physics residual ${((d.physics||{}).power_residual_kw_now)} kW`;
+  const ran=new Set(d.model_health.ran||[]);
+  $('models').innerHTML=(d.model_health.connected||[]).map(id=>
+    `<i class="${ran.has(id)?'ok':'warn'}">${id}${ran.has(id)?' ✓':' · idle'}</i>`).join('');
+  loadAudit();
+}
+async function whatif(){
+  const r=await fetch('/what-if',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({derate_pct:20})});
+  const d=await r.json(); alert('derate 20% delta %\\n'+JSON.stringify(d.delta_pct||d,null,2));
+}
+async function ack(id){ await fetch('/alerts/ack',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({alert_id:id})}); run(); }
+async function feedback(ok){
+  await fetch('/feedback',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({correct:ok, note:$('fb_note').value})});
+  loadAudit();
+}
+async function loadAudit(){ const r=await fetch('/audit'); $('audit').textContent=JSON.stringify(await r.json(),null,1); }
 health();
-</script></body></html>"""
+</script>
+</body></html>
+"""
 
 
 def serve(port: int = 8100, days: float = 10.0, seed: int = 7) -> None:
