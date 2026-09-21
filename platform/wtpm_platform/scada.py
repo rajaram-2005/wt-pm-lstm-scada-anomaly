@@ -98,6 +98,30 @@ def load_tag_map(path: Optional[str]) -> Dict[str, str]:
     return {str(k): str(v) for k, v in raw.items()}
 
 
+def probe_headers(headers: Sequence[str], extra: Optional[Mapping[str, str]] = None) -> Dict[str, Any]:
+    """Suggest a tag map from a historian CSV header row."""
+    mapped, unknown, special = {}, [], {}
+    for h in headers:
+        r = resolve_column(h, extra)
+        if r == "__time__":
+            special["time"] = h
+        elif r == "__turbine__":
+            special["turbine"] = h
+        elif r:
+            mapped[h] = r
+        else:
+            unknown.append(h)
+    needed = [c for c in canonical_channels() if c not in mapped.values()]
+    return {
+        "mapped": mapped,
+        "special": special,
+        "unknown": unknown,
+        "missing_canonical": needed,
+        "coverage": round(len(set(mapped.values())) / max(len(canonical_channels()), 1), 3),
+        "ready": len(mapped) >= 4,
+    }
+
+
 def ingest_scada_csv(
     path: str,
     turbine_id: str = "WT-SCADA",

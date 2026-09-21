@@ -29,7 +29,7 @@ CHANNELS = (
 
 def test_config_and_split_by_turbine(tmp_path):
     from wtpm_platform.config import load_config
-    from wtpm_platform.scada import split_by_turbine
+    from wtpm_platform.scada import probe_headers, split_by_turbine
     p = tmp_path / "wt-pm.yaml"
     p.write_text("plant: demo\npoll_seconds: 12\n")
     cfg = load_config(str(p))
@@ -42,6 +42,10 @@ def test_config_and_split_by_turbine(tmp_path):
     g = split_by_turbine(rows)
     assert set(g) == {"A", "B"}
     assert g["A"].n_steps == 2 and g["B"].n_steps == 1
+    pr = probe_headers(["WindSpeed", "Pwr_kW", "mystery_tag", "DateTime"])
+    assert pr["mapped"]["WindSpeed"] == "wind_speed_ms"
+    assert "mystery_tag" in pr["unknown"]
+    assert pr["special"]["time"] == "DateTime"
 
 
 def test_scada_column_map_and_writeback():

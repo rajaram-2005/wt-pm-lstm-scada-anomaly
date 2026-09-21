@@ -297,6 +297,19 @@ def cmd_scada(args) -> int:
         load_tag_map, write_tags_csv,
     )
 
+    if getattr(args, "probe", ""):
+        import csv as _csv
+        with open(args.probe, newline="", encoding="utf-8-sig") as f:
+            headers = next(_csv.reader(f))
+        from wtpm_platform.scada import probe_headers
+        extra = load_tag_map(args.map) if args.map else {}
+        report = probe_headers(headers, extra)
+        print(json.dumps(report, indent=2))
+        print(f"[scada] coverage {report['coverage']:.0%}  "
+              f"mapped {len(report['mapped'])}  unknown {len(report['unknown'])}  "
+              f"missing {report['missing_canonical']}", file=sys.stderr)
+        return 0 if report["ready"] else 1
+
     if args.write_map:
         path = args.write_map
         with open(path, "w", encoding="utf-8") as f:
@@ -461,6 +474,7 @@ def main(argv=None) -> int:
     sp.add_argument("--out", default="scada_writeback.json")
     sp.add_argument("--demo", action="store_true", help="write a demo CSV then score it")
     sp.add_argument("--write-map", default="", help="write example tag_map.json and exit")
+    sp.add_argument("--probe", default="", help="print suggested tag map from a CSV header and exit")
     sp.add_argument("--no-fit", dest="fit", action="store_false")
     sp.set_defaults(fn=cmd_scada, fit=True)
     sp = sub.add_parser("watch", help="poll a historian drop folder and write WTPM.* tags")
