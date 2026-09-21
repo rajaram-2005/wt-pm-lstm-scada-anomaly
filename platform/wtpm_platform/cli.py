@@ -261,6 +261,33 @@ def cmd_serve(args) -> int:
     return 0
 
 
+def cmd_agent(args) -> int:
+    """Run the Hermes Thought/Action/Observation loop and print the trace."""
+    from wtpm_platform.contracts import OperatingContext
+    from wtpm_platform.orchestrator import Orchestrator
+
+    print(f"[agent] Hermes loop on {args.days} days of SCADA ...")
+    batch = _make_batch(args.days, seed=args.seed)
+    orch = Orchestrator(max_workers=args.workers)
+    ctx = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
+    batch = orch.prepare(batch)
+    orch.fit(batch, ctx, verbose=not args.quiet if hasattr(args, "quiet") else False)
+    result = orch.analyse(batch, ctx)
+    hermes = result.get("hermes") or {}
+    print(f"\n[agent] goal: {hermes.get('goal')}")
+    print("[agent] principles:", ", ".join(hermes.get("principles") or []))
+    for i, step in enumerate(hermes.get("trace") or [], 1):
+        print(f"\n  Thought {i}: {step['thought']}")
+        print(f"  Action  {i}: {step['action']} {step.get('args') or ''}")
+        obs = step.get("observation") or {}
+        brief = {k: v for k, v in obs.items() if k != "contrast_vs_healthy"}
+        print(f"  Observe {i}: {json.dumps(brief, default=str)[:400]}")
+    fin = hermes.get("final") or {}
+    print("\n[agent] FINAL")
+    print(json.dumps(fin, indent=2, default=str))
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="wt-pm",
@@ -295,6 +322,10 @@ def main(argv=None) -> int:
                         help="clone the 24 sibling wt-pm-* repos into external/")
     sp.add_argument("--dir", default="external")
     sp.set_defaults(fn=cmd_fetch_models)
+    sp = sub.add_parser("agent", help="Hermes Thought/Action/Observation loop + XAI")
+    common(sp)
+    sp.add_argument("--quiet", action="store_true")
+    sp.set_defaults(fn=cmd_agent)
 
     args = p.parse_args(argv)
     return args.fn(args)

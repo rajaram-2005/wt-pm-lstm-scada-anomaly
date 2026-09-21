@@ -33,6 +33,7 @@ wt-pm production --days 10 --out out.json
 wt-pm fleet --turbines 6 --days 8
 wt-pm edge --out edge_artifacts        # ESP32 model.h + INT8 tflite
 wt-pm serve --port 8100                # API + command-center dashboard
+wt-pm agent --days 8 --quiet           # Hermes Thought/Action/Observation + XAI
 ```
 
 After `pip install`, the `wt-pm` executable is on your PATH (same as `wtpm-platform`).

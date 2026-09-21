@@ -27,6 +27,47 @@ CHANNELS = (
 )
 
 
+def test_hermes_trace_has_thought_action_observation():
+    from wtpm_platform.hermes import HermesAgent, contrastive_channels
+    b = FeaturePipeline(window=24, stride=4).transform(synth_batch(200))
+    fake = {
+        "what": {"fault": "bearing_wear", "fault_confidence": 0.8, "votes": {"bearing_wear": 2},
+                 "current_fused_score": 4.2, "alarm": True, "anomaly_events": [{}], "conflicts": []},
+        "where": {"subsystem": "drivetrain"},
+        "why": {"contributing_features": {"bearing_vib_rms_mm_s": 1.2},
+                "relevant_sensor_signals": ["bearing_vib_rms_mm_s"]},
+        "severity": {"degradation_state": 2},
+        "rul": {"hours": 80.0, "uncertainty_hours": 10.0, "source": "m16"},
+        "safety": {"decision": "INSPECT", "reasons": ["bearing"]},
+        "action": {"action": "schedule_inspection", "cost_optimal": "schedule_inspection"},
+        "risk_score": 72.0,
+        "physics": {"power_residual_kw_now": 3.0},
+        "what_if_derate_20pct": {"scenario": "derate 20%", "delta_pct": {"von_mises_proxy": -8.0}},
+    }
+
+    class _Q:
+        def run(self, batch):
+            return {"trust": 0.9, "n_flags": 0, "flags": []}
+
+    class _Twin:
+        def maintenance_scenario(self, *a, **k):
+            return fake["what_if_derate_20pct"]
+
+    class _Orch:
+        quality = _Q()
+        twin = _Twin()
+
+    res = HermesAgent(_Orch()).run(b, fake)
+    actions = [s.action for s in res.trace]
+    assert actions[0] == "sensor_quality"
+    assert "finish" in actions
+    assert all(s.thought for s in res.trace)
+    assert res.final["what"] == "bearing_wear"
+    assert "bearing" in res.final["why"]["narrative"].lower() or "bearing_wear" in res.final["why"]["narrative"]
+    c = contrastive_channels(b)
+    assert "bearing_vib_rms_mm_s" in c
+
+
 def test_builtin_simulator_and_cli_version():
     from wtpm_platform.simulate import simulate_scada
     from wtpm_platform.cli import main, __version__

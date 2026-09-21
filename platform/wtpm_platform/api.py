@@ -238,6 +238,10 @@ pre{white-space:pre-wrap;font-size:11px;color:var(--mut);max-height:220px;overfl
     <h2>Why (SHAP + physics)</h2>
     <div id="why">—</div>
   </div>
+  <div class="card span12">
+    <h2>Hermes agent (Thought → Action → Observation)</h2>
+    <pre id="hermes">—</pre>
+  </div>
 
   <div class="card span12">
     <h2>25-model engine</h2>
@@ -309,8 +313,13 @@ function render(d){
   $('alerts').innerHTML=al.length?al.map(a=>`${pill(a.severity==='critical'?'bad':'warn',a.severity)} ${a.message}
      <button onclick="ack('${a.alert_id}')">ack</button>`).join('<br>'):'no active alerts';
   const shap=d.why&&d.why.contributing_features||{};
-  $('why').innerHTML=`<pre>${JSON.stringify(shap,null,1)}</pre>
-     physics residual ${((d.physics||{}).power_residual_kw_now)} kW`;
+  $('why').innerHTML=`<div class="sub">${(d.why&&d.why.narrative)||''}</div>
+     <pre>${JSON.stringify(shap,null,1)}</pre>
+     physics residual ${((d.physics||{}).power_residual_kw_now)} kW
+     counterfactual: ${JSON.stringify((d.why&&d.why.counterfactual)||{})}`;
+  const ht=(d.hermes&&d.hermes.trace)||[];
+  $('hermes').textContent=ht.map((s,i)=>`Thought ${i+1}: ${s.thought}\nAction  ${i+1}: ${s.action}\nObserve ${i+1}: ${JSON.stringify(s.observation).slice(0,280)}`).join('\n\n')
+    + '\n\nFINAL '+JSON.stringify((d.hermes&&d.hermes.final)||{},null,1);
   const ran=new Set(d.model_health.ran||[]);
   $('models').innerHTML=(d.model_health.connected||[]).map(id=>
     `<i class="${ran.has(id)?'ok':'warn'}">${id}${ran.has(id)?' ✓':' · idle'}</i>`).join('');

@@ -241,7 +241,56 @@ class XAIEngine:
             if base in batch.channel_names and base not in chans:
                 chans.append(base)
         bundle["relevant_sensor_signals"] = chans[:5]
+        bundle["contrastive"] = self._contrastive(batch)
+        bundle["counterfactual"] = self._counterfactual(batch, shap_attr)
+        bundle["method"] = [
+            "shap_tree_explainer (m21)",
+            "contrastive healthy-band z",
+            "counterfactual: restore top feature to healthy median",
+        ]
         return bundle
+
+    @staticmethod
+    def _contrastive(batch: SensorBatch, frac: float = 0.4) -> Dict[str, Any]:
+        n = batch.n_steps
+        h = max(int(n * frac), 8)
+        rows = []
+        for ch in batch.channel_names:
+            x = np.asarray(batch.channel(ch), float)
+            med, sd = float(np.nanmedian(x[:h])), float(np.nanstd(x[:h]) + 1e-9)
+            z = (float(x[-1]) - med) / sd
+            rows.append((abs(z), ch, round(z, 3), round(med, 3), round(float(x[-1]), 3)))
+        rows.sort(reverse=True)
+        return {
+            "top_deviations": [
+                {"channel": ch, "z": z, "healthy_median": med, "now": now}
+                for _, ch, z, med, now in rows[:6]
+            ]
+        }
+
+    @staticmethod
+    def _counterfactual(batch: SensorBatch, shap_attr: Dict[str, float]) -> Dict[str, Any]:
+        """If we restored the strongest SHAP channel to its healthy median, what changes.
+
+        This is a *feature-level* counterfactual (not a causal do-operator). It
+        answers 'what would the operator look at first to return to normal'.
+        """
+        if not shap_attr or batch.features is None:
+            return {"note": "no SHAP attributions available"}
+        feat = next(iter(shap_attr))
+        base = feat.split("__")[0]
+        if base not in batch.channel_names:
+            return {"feature": feat, "note": "not a raw channel"}
+        x = np.asarray(batch.channel(base), float)
+        h = max(len(x) // 3, 8)
+        return {
+            "feature": feat,
+            "channel": base,
+            "now": round(float(x[-1]), 3),
+            "healthy_median": round(float(np.nanmedian(x[:h])), 3),
+            "restore_delta": round(float(np.nanmedian(x[:h]) - x[-1]), 3),
+            "claim": f"returning {base} to its healthy median is the first counterfactual lever",
+        }
 
 
 # ---------------------------------------------------------------------------

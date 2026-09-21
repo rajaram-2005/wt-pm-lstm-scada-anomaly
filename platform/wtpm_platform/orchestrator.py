@@ -36,6 +36,7 @@ from wtpm_platform.advanced import (
     AlertManager, CostRiskOptimizer, DecisionAuditLog, MaintenancePlanner,
     SensorQualityMonitor, downsample_series, health_index,
 )
+from wtpm_platform.hermes import HermesAgent
 
 
 def build_default_registry() -> ModelRegistry:
@@ -461,6 +462,10 @@ class Orchestrator:
             "series": series,
             "pipeline_ms": round((time.perf_counter() - t_start) * 1000, 1),
         }
+        hermes = self.hermes.run(batch, result)
+        result["hermes"] = hermes.to_dict()
+        result["why"]["narrative"] = hermes.final.get("why", {}).get("narrative")
+        result["why"]["hermes_steps"] = hermes.to_dict()["n_steps"]
         problems = WTDataSchema.validate({
             "timestamp": result["timestamp"], "turbine_id": batch.turbine_id,
             "model_id": "wtpm-orchestrator",
