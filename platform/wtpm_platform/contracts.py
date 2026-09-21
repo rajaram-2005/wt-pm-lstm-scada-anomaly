@@ -239,6 +239,10 @@ class OperatingContext:
     questions: Sequence[str] = ("what", "where", "why", "severity", "rul", "action", "safety")
     latency_budget_ms: float = 60_000.0
     turbine_count: int = 1
+    # When True (default for research/production), every available adapter is
+    # eligible on CLOUD even if its primary target is edge/MCU. MCU deployments
+    # still refuse large models.
+    connect_all: bool = True
 
 
 class Question(str, Enum):

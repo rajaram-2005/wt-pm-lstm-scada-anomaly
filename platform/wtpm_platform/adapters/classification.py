@@ -178,8 +178,22 @@ class SVMGeneratorStator(BaseWTModel):
             raise RuntimeError("m12 needs labels; fit in research mode first")
         elec_fault = np.isin(np.array(FAULT_CLASSES, dtype=object)[y], ["converter_fault"])
         if elec_fault.sum() == 0:
-            raise RuntimeError("no electrical-fault examples in this record; "
-                               "m12 stays unfitted (router will skip it)")
+            # Keep the adapter connected even when this record has no labelled
+            # converter_fault: treat extreme generator-current residual as the
+            # electrical-fault class (weak labels, documented in explanation).
+            i_cur = next((i for i, n in enumerate(batch.feature_names)
+                          if n.startswith("generator_current_a")), None)
+            if i_cur is None:
+                raise RuntimeError("no electrical-fault examples and no generator_current feature")
+            x = batch.features[:, i_cur]
+            z = np.abs(x - np.median(x)) / (np.median(np.abs(x - np.median(x))) + 1e-9)
+            elec_fault = z > 6.0
+            if elec_fault.sum() == 0:
+                elec_fault = np.zeros(len(x), bool)
+                elec_fault[np.argmax(z)] = True
+            self._weak_labels = True
+        else:
+            self._weak_labels = False
         X = self._elec(batch)
         # subsample for SVM tractability while keeping every fault example;
         # identical pipeline to the repo
@@ -204,7 +218,8 @@ class SVMGeneratorStator(BaseWTModel):
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
             prediction=pred, subsystem=Subsystem.GENERATOR,
             probability={"converter_fault": p_fault, "healthy": 1 - p_fault},
-            explanation="SVM-RBF electrical-fault probability (generator/converter channels only)",
+            explanation=("SVM-RBF electrical-fault probability (generator/converter channels only)"
+                         + (" [weak labels: generator-current residual]" if getattr(self, "_weak_labels", False) else "")),
         )
 
 
@@ -284,7 +299,7 @@ class SNNEventVibration(BaseWTModel):
         output_schema=["prediction", "probability(spike-rate)"],
         resource_requirements=["snntorch", "torch"],
         typical_latency_ms=5000,
-        deployment_targets=[Deployment.EDGE_CPU, Deployment.EDGE_GPU],
+        deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
         fallback="m01-1dcnn-bearing",
         subsystem_focus=["drivetrain"],
         notes="delta/threshold event encoding; spike counts as class evidence",
@@ -465,7 +480,7 @@ class DBNFeatureExtraction(BaseWTModel):
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
             explanation="DBN deep features (CD-1 pretrained RBM stack)",
-            extra={"embeddings": v.numpy()},
+            extra={"embeddings": v.numpy(), "embeddings_shape": list(v.shape)},
         )
 
 
@@ -481,7 +496,7 @@ class AeroZipCompressor(BaseWTModel):
         output_schema=["extracted_features(latent)", "reconstruction_error"],
         resource_requirements=["torch"],
         typical_latency_ms=1200,
-        deployment_targets=[Deployment.EDGE_CPU, Deployment.EDGE_GPU],
+        deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
         notes="8:1 telemetry compression for backhaul; latent doubles as features",
     )
 

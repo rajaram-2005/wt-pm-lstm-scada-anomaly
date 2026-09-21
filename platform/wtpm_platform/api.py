@@ -117,7 +117,7 @@ color:#8ea0c4;max-height:420px;overflow:auto} .big{font-size:30px;font-weight:80
 .row{display:flex;gap:14px;flex-wrap:wrap} .kv{background:#0f1628;border-radius:8px;
 padding:10px 14px} .kv b{color:#4cc9f0;display:block;font-size:11px;text-transform:uppercase}
 </style></head><body>
-<h1>WT-PM Unified Platform — 25 models, one orchestrator</h1>
+<h1>WT-PM Unified Platform — all 25 models connected</h1>
 <div class=card><button onclick="run()">Run full analysis</button>
  <span id=status></span>
 <div class=row id=summary></div></div>

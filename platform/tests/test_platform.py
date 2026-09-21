@@ -169,6 +169,19 @@ def test_registry_has_all_25():
     assert len(repos) == 25              # one adapter per repository
 
 
+def test_connect_all_routes_every_available_model():
+    reg = build_default_registry()
+    router = ModelRouter(reg)
+    b = FeaturePipeline(window=24, stride=4).transform(synth_batch(200))
+    ctx = OperatingContext(mode="research", has_labels=True,
+                           has_vibration_waveform=True, connect_all=True)
+    sel = router.route(ctx, b)
+    routed = set(sum(sel.values(), []))
+    available = {mid for mid in reg.ids() if reg.get(mid).available()}
+    missing = available - routed
+    assert not missing, f"available models not routed: {sorted(missing)}"
+
+
 def test_router_respects_deployment_and_labels():
     reg = build_default_registry()
     router = ModelRouter(reg)

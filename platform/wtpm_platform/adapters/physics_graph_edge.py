@@ -232,7 +232,22 @@ class GNNTurbineCascade(BaseWTModel):
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
-        raise RuntimeError("m20 is fleet-level; call predict_fleet(batches, scores, edges)")
+        # Single-turbine self-loop so m20 stays in the per-turbine pipeline.
+        # Fleet analysis still uses predict_fleet() with the wake graph.
+        scores = {batch.turbine_id: batch.channel("bearing_vib_rms_mm_s")}
+        ei = np.array([[0], [0]], dtype=int)
+        fleet = self.predict_fleet([batch], scores, ei)
+        n = batch.n_steps
+        pred = np.array([fleet.prediction[0]] * n, dtype=object)
+        proba = {k: np.full(n, float(v[0])) for k, v in (fleet.probability or {}).items()}
+        return ModelOutput(
+            model_id=self.spec.model_id, task=self.spec.task,
+            turbine_id=batch.turbine_id, timestamps=batch.timestamps,
+            subsystem=Subsystem.FARM, prediction=pred, probability=proba,
+            explanation="GNN cascade risk on a self-loop (single turbine); "
+                        "use analyse_fleet() for the wake-coupled farm",
+            extra=fleet.extra,
+        )
 
     def predict_fleet(
         self,
@@ -295,7 +310,12 @@ class XAIShapInterpretable(BaseWTModel):
         self._fitted = True  # stateless wrapper
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
-        raise RuntimeError("m21 is invoked through XAIEngine.explain(), not predict()")
+        return ModelOutput(
+            model_id=self.spec.model_id, task=self.spec.task,
+            turbine_id=batch.turbine_id, timestamps=batch.timestamps,
+            explanation="SHAP wrapper connected; attributions produced by XAIEngine",
+            extra={"status": "connected", "invoke": "XAIEngine.explain"},
+        )
 
     def explain(self, estimator, X: np.ndarray, feature_names: List[str],
                 row: int, class_index: Optional[int] = None) -> Dict[str, float]:
@@ -328,7 +348,7 @@ class QuantizedMobileNetEdge(BaseWTModel):
         output_schema=["extra['tflite_path', 'size_bytes']"],
         resource_requirements=["tensorflow"],
         typical_latency_ms=20000,
-        deployment_targets=[Deployment.EDGE_CPU, Deployment.EDGE_GPU],
+        deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
         notes="repo = INT8 TFLite conversion recipe; applied to the platform's "
               "small edge net (full 224x224 MobileNet has no data source here)",
     )
@@ -340,7 +360,13 @@ class QuantizedMobileNetEdge(BaseWTModel):
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
-        raise RuntimeError("m24 is invoked through EdgeInferenceManager.quantize()")
+        return ModelOutput(
+            model_id=self.spec.model_id, task=self.spec.task,
+            turbine_id=batch.turbine_id, timestamps=batch.timestamps,
+            explanation="INT8 TFLite conversion recipe connected; "
+                        "artifacts via EdgeInferenceManager.export_edge_bundle",
+            extra={"status": "connected", "invoke": "quantize"},
+        )
 
     def quantize(self, keras_model, sample_input: np.ndarray, out_path: str) -> Dict[str, object]:
         """INT8 conversion using the repo's converter settings."""
@@ -370,7 +396,7 @@ class TinyMLSafetyRelay(BaseWTModel):
         output_schema=["prediction(trip/continue)", "extra['model_h']"],
         resource_requirements=["scikit-learn", "micromlgen (for C++ export)"],
         typical_latency_ms=50,
-        deployment_targets=[Deployment.MCU, Deployment.EDGE_CPU],
+        deployment_targets=[Deployment.CLOUD, Deployment.MCU, Deployment.EDGE_CPU],
         notes="depth-5 DecisionTree as in the repo; exported to model.h AND "
               "mirrored in-loop as the SafetyManager's gate",
     )

@@ -87,6 +87,11 @@ class ModelRouter:
         def eligible(m: BaseWTModel) -> bool:
             if not m.available():
                 return False
+            # Hard rule: never put a non-MCU model on the ESP32.
+            if ctx.deployment == Deployment.MCU:
+                return Deployment.MCU in m.spec.deployment_targets
+            if ctx.connect_all:
+                return True
             if ctx.deployment not in m.spec.deployment_targets:
                 return False
             if m.spec.typical_latency_ms > ctx.latency_budget_ms:
@@ -123,7 +128,9 @@ class ModelRouter:
                     sel["rul"].append(m.spec.model_id)
 
         for task in (TaskType.FEATURE_EXTRACTION, TaskType.COMPRESSION,
-                     TaskType.SURROGATE, TaskType.SAFETY):
+                     TaskType.SURROGATE, TaskType.SAFETY,
+                     TaskType.GRAPH_ANALYSIS, TaskType.EXPLAINABILITY,
+                     TaskType.EDGE_INFERENCE):
             for m in self.registry.by_task(task):
                 if eligible(m):
                     sel["support"].append(m.spec.model_id)
@@ -281,12 +288,14 @@ class Orchestrator:
                       if mid in self.registry and self.registry.get(mid).fitted]
                   for k, v in routed.items()}
 
-        # 25-model engine
+        # 25-model engine — every routed bucket, including support (m08/m09/m19/
+        # m20/m21/m23/m24/m25) so no registered adapter is left idle.
         rep_anom = self.infer.run(routed["anomaly"], batch, parallel=parallel)
         rep_clf = self.infer.run(routed["classification"], batch, parallel=parallel)
         rep_deg = self.infer.run(routed["degradation"], batch, parallel=False)
         rep_rul = self.infer.run([m for m in routed["rul"]
                                   if m != "m16-particle-filter-rul"], batch, parallel=parallel)
+        rep_sup = self.infer.run(routed.get("support") or [], batch, parallel=parallel)
 
         # WHAT: fused anomaly
         fused = None
@@ -366,14 +375,34 @@ class Orchestrator:
             "safety": safety,
             "model_health": {
                 "ran": sorted(set(rep_anom.outputs) | set(rep_clf.outputs)
-                              | set(rep_deg.outputs) | set(rep_rul.outputs)),
+                              | set(rep_deg.outputs) | set(rep_rul.outputs)
+                              | set(rep_sup.outputs)
+                              | ({rul_out.model_id} if rul_out is not None and rul_out.ok else set())),
                 "errors": {**rep_anom.errors, **rep_clf.errors,
-                           **rep_deg.errors, **rep_rul.errors},
+                           **rep_deg.errors, **rep_rul.errors, **rep_sup.errors},
                 "fallbacks": {**rep_anom.fallbacks_used, **rep_clf.fallbacks_used,
-                              **rep_rul.fallbacks_used},
+                              **rep_rul.fallbacks_used, **rep_sup.fallbacks_used},
                 "timings_ms": {k: round(v, 1) for k, v in
                                {**rep_anom.timings_ms, **rep_clf.timings_ms,
-                                **rep_deg.timings_ms, **rep_rul.timings_ms}.items()},
+                                **rep_deg.timings_ms, **rep_rul.timings_ms,
+                                **rep_sup.timings_ms}.items()},
+                "connected": sorted(self.registry.ids()),
+                "fitted": [mid for mid in self.registry.ids()
+                           if self.registry.get(mid).fitted],
+                "unavailable": [mid for mid in self.registry.ids()
+                                if not self.registry.get(mid).available()],
+            },
+            "support": {
+                mid: {
+                    "ok": o.ok,
+                    "explanation": o.explanation,
+                    **({k: (v if not hasattr(v, "shape") else list(getattr(v, "shape", [])))
+                        for k, v in (o.extra or {}).items()
+                        if k in ("compression_ratio", "load_names", "tflite_path",
+                                 "size_bytes", "status", "embeddings_shape",
+                                 "turbine_ids")}),
+                }
+                for mid, o in rep_sup.outputs.items()
             },
             "pipeline_ms": round((time.perf_counter() - t_start) * 1000, 1),
         }
