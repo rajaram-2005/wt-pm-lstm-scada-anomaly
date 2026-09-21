@@ -1,11 +1,12 @@
 """CLI: research and production modes for the unified WT-PM system.
 
-  wtpm-platform inspect                     # registry + availability report
-  wtpm-platform research [--days N]         # train, evaluate, compare, track
-  wtpm-platform production [--days N]       # inference/monitoring/alerts path
-  wtpm-platform fleet [--turbines N]        # GNN cascade analysis (m20)
-  wtpm-platform edge --out DIR              # export ESP32 header + INT8 tflite
-  wtpm-platform serve [--port 8100]         # HTTP API + dashboard
+  wt-pm inspect                     # registry + availability report
+  wt-pm research [--days N]         # train, evaluate, compare, track
+  wt-pm production [--days N]       # inference/monitoring/alerts path
+  wt-pm fleet [--turbines N]        # GNN cascade analysis (m20)
+  wt-pm edge --out DIR              # export ESP32 header + INT8 tflite
+  wt-pm serve [--port 8100]         # HTTP API + dashboard
+  wt-pm fetch-models                # clone the 24 sibling repos into external/
 """
 
 from __future__ import annotations
@@ -18,22 +19,13 @@ import sys
 import numpy as np
 
 
-def _make_batch(days: float, seed: int = 7, turbine_id: str = "WT-01"):
-    """Simulated SCADA from the reference repo (rung-1 fidelity, labelled)."""
-    from wt_pm_lstm.config import DataConfig
-    from wt_pm_lstm.simulate import simulate_timeline, default_fault_schedule
-    from wtpm_platform.data import ingest_timeline
+__version__ = "0.1.0"
 
-    cfg = DataConfig()
-    cfg.n_days = days
-    cfg.seed = seed
-    n_steps = int(days * 24 * 6)
-    specs = default_fault_schedule(n_steps, first_fault_step=int(n_steps * 0.55), seed=seed)
-    tl = simulate_timeline(cfg, fault_specs=specs, turbine_id=turbine_id)
-    batch = ingest_timeline(tl)
-    batch.meta["fault_kind_per_step"] = tl.meta.get("fault_kind_per_step")
-    batch.meta["fault_label"] = tl.fault_label
-    return batch
+
+def _make_batch(days: float, seed: int = 7, turbine_id: str = "WT-01"):
+    """Simulated SCADA (reference physics engine if installed, else built-in)."""
+    from wtpm_platform.simulate import make_batch
+    return make_batch(days, seed=seed, turbine_id=turbine_id)
 
 
 def cmd_inspect(args) -> int:
@@ -166,22 +158,68 @@ def cmd_production(args) -> int:
     return 0
 
 
+SIBLING_REPOS = (
+    "wt-pm-1d-cnn-bearing-vibration", "wt-pm-convlstm-wear-prognostics",
+    "wt-pm-tcn-power-curve", "wt-pm-gru-scada-telemetry",
+    "wt-pm-informer-long-sequence", "wt-pm-snn-event-vibration",
+    "wt-pm-contrastive-ssl-vibration", "wt-pm-dbn-feature-extraction",
+    "wt-pm-random-forest-telemetry", "wt-pm-xgboost-tabular-faults",
+    "wt-pm-svm-rbf-generator-stator", "wt-pm-deep-svdd-boundary",
+    "wt-pm-isolation-forest-telemetry", "wt-pm-hmm-degradation-states",
+    "wt-pm-particle-filter-rul", "wt-pm-mlp-rul-regression",
+    "wt-pm-pg-bnn-wind-turbine", "wt-pm-digital-twin-surrogate",
+    "wt-pm-gnn-turbines-cascade", "wt-pm-xai-shap-interpretable",
+    "wt-pm-vae-reconstruction-loss", "wt-pm-aerozip-autoencoder-compressor",
+    "wt-pm-quantized-mobilenet-edge", "wt-pm-tinyml-esp32-safety-relay",
+)
+
+
+def cmd_fetch_models(args) -> int:
+    """Clone the 24 sibling research repos into ``external/`` (read-only)."""
+    import subprocess
+    dest = os.path.abspath(args.dir)
+    os.makedirs(dest, exist_ok=True)
+    ok = 0
+    for r in SIBLING_REPOS:
+        path = os.path.join(dest, r)
+        if os.path.isdir(path) and os.path.exists(os.path.join(path, "model.py")):
+            print(f"  [skip] {r}")
+            ok += 1
+            continue
+        url = f"https://github.com/rajaram-2005/{r}.git"
+        print(f"  [clone] {url}")
+        rc = subprocess.call(["git", "clone", "--depth", "1", url, path])
+        if rc == 0:
+            ok += 1
+        else:
+            print(f"  [fail] {r} exit={rc}")
+    print(f"[fetch-models] {ok}/{len(SIBLING_REPOS)} repos in {dest}")
+    print(f"               export WTPM_EXTERNAL_DIR={dest}")
+    return 0 if ok == len(SIBLING_REPOS) else 1
+
+
 def cmd_fleet(args) -> int:
-    from wt_pm_lstm.config import DataConfig
-    from wt_pm_lstm.simulate import simulate_fleet
     from wtpm_platform.contracts import OperatingContext
-    from wtpm_platform.data import ingest_timeline
     from wtpm_platform.orchestrator import Orchestrator
 
     print(f"[fleet] simulating {args.turbines} wake-coupled turbines ...")
-    cfg = DataConfig(); cfg.n_days = args.days; cfg.seed = args.seed
-    tls = simulate_fleet(cfg, n_turbines=args.turbines)
-    batches = [ingest_timeline(t) for t in tls]
+    try:
+        from wt_pm_lstm.config import DataConfig
+        from wt_pm_lstm.simulate import simulate_fleet
+        from wtpm_platform.data import ingest_timeline
+        cfg = DataConfig(); cfg.n_days = args.days; cfg.seed = args.seed
+        tls = simulate_fleet(cfg, n_turbines=args.turbines)
+        batches = [ingest_timeline(t) for t in tls]
+    except Exception:
+        batches = [_make_batch(args.days, seed=args.seed + i,
+                               turbine_id=f"WT-{i+1:02d}")
+                   for i in range(args.turbines)]
     orch = Orchestrator(max_workers=args.workers)
     ctx = OperatingContext(mode="research", has_labels=True)
     b0 = orch.prepare(batches[0])
-    b0.meta["fault_kind_per_step"] = tls[0].meta.get("fault_kind_per_step")
-    b0.meta["fault_label"] = tls[0].fault_label
+    if "tls" in locals():
+        b0.meta["fault_kind_per_step"] = tls[0].meta.get("fault_kind_per_step")
+        b0.meta["fault_label"] = tls[0].fault_label
     orch.fit(b0, ctx, model_ids=["m14-isolation-forest"], verbose=False)
     batches = [orch.prepare(b) for b in batches]
     # wake edges: chain by layout order (upstream -> downstream, both dirs)
@@ -224,7 +262,11 @@ def cmd_serve(args) -> int:
 
 
 def main(argv=None) -> int:
-    p = argparse.ArgumentParser(prog="wtpm-platform")
+    p = argparse.ArgumentParser(
+        prog="wt-pm",
+        description="WT-PM unified predictive-maintenance platform (25 models).",
+    )
+    p.add_argument("--version", action="version", version=f"wt-pm {__version__}")
     sub = p.add_subparsers(dest="cmd", required=True)
 
     def common(sp):
@@ -249,6 +291,10 @@ def main(argv=None) -> int:
     sp = sub.add_parser("serve"); common(sp)
     sp.add_argument("--port", type=int, default=8100)
     sp.set_defaults(fn=cmd_serve)
+    sp = sub.add_parser("fetch-models",
+                        help="clone the 24 sibling wt-pm-* repos into external/")
+    sp.add_argument("--dir", default="external")
+    sp.set_defaults(fn=cmd_fetch_models)
 
     args = p.parse_args(argv)
     return args.fn(args)

@@ -27,6 +27,18 @@ CHANNELS = (
 )
 
 
+def test_builtin_simulator_and_cli_version():
+    from wtpm_platform.simulate import simulate_scada
+    from wtpm_platform.cli import main, __version__
+    b = simulate_scada(days=2, seed=3)
+    assert b.n_steps == 2 * 24 * 6
+    assert b.meta["fault_label"].sum() > 0
+    assert __version__
+    with pytest.raises(SystemExit) as ei:
+        main(["--version"])
+    assert ei.value.code == 0
+
+
 def synth_batch(n: int = 400, seed: int = 0, fault_at: float = 0.7) -> SensorBatch:
     rng = np.random.default_rng(seed)
     t = np.arange(n) * 600

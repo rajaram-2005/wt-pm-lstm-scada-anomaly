@@ -3,19 +3,29 @@ requires = ["setuptools>=64"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "wtpm-platform"
+name = "wt-pm"
 version = "0.1.0"
-description = "WT-PM unified predictive-maintenance platform: orchestration layer over the 25 wt-pm-* research models"
+description = "WT-PM: unified wind-turbine predictive-maintenance platform (25 models, one CLI)"
+readme = "README.md"
 requires-python = ">=3.10"
-dependencies = ["numpy", "pandas", "scikit-learn"]
+license = { text = "MIT" }
+authors = [{ name = "WT-PM" }]
+keywords = ["wind-turbine", "scada", "predictive-maintenance", "anomaly-detection", "rul"]
+dependencies = ["numpy>=1.24", "pandas>=2.0", "scikit-learn>=1.3"]
 
 [project.optional-dependencies]
 torch = ["torch"]
 tf = ["tensorflow-cpu"]
 full = ["torch", "tensorflow-cpu", "xgboost", "hmmlearn", "shap", "micromlgen", "snntorch", "torch-geometric"]
+dev = ["pytest>=7.0"]
 
 [project.scripts]
+wt-pm = "wtpm_platform.cli:main"
 wtpm-platform = "wtpm_platform.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"
+Documentation = "https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/main/platform/docs"
 
 [tool.setuptools.packages.find]
 include = ["wtpm_platform*"]

@@ -47,6 +47,16 @@ wtpm serve                          # HTTP API + scoring console on :8000
 pytest -q                           # gradient checks, contract tests, protocol tests
 ```
 
+The **unified 25-model platform** installs as its own terminal command:
+
+```bash
+pip install -e platform             # provides the `wt-pm` executable
+# or: pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
+wt-pm --version
+wt-pm inspect
+wt-pm serve --port 8100
+```
+
 ```python
 from wt_pm_lstm.config import RunConfig
 from wt_pm_lstm.pipeline import run_experiment
