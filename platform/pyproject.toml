@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wtpm-platform"
+version = "0.1.0"
+description = "WT-PM unified predictive-maintenance platform: orchestration layer over the 25 wt-pm-* research models"
+requires-python = ">=3.10"
+dependencies = ["numpy", "pandas", "scikit-learn"]
+
+[project.optional-dependencies]
+torch = ["torch"]
+tf = ["tensorflow-cpu"]
+full = ["torch", "tensorflow-cpu", "xgboost", "hmmlearn", "shap", "micromlgen", "snntorch", "torch-geometric"]
+
+[project.scripts]
+wtpm-platform = "wtpm_platform.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["wtpm_platform*"]

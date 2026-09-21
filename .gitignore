@@ -25,3 +25,9 @@ reports/*.md
 data/*.csv
 data/*.npz
 *.log
+
+# unified platform: external research repos are cloned, never vendored
+external/
+runs_platform/
+edge_artifacts/
+production_result.json

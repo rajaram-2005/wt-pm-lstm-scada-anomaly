@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WT-PM Ecosystem — 25 Models, One Fabric</title>
+<style>
+  :root {
+    --bg: #0b1020;
+    --panel: #121a30;
+    --panel2: #0f1628;
+    --line: #24304f;
+    --text: #dce4f5;
+    --muted: #8ea0c4;
+    --edge: #38507e;
+
+    --c-edgeai:   #f2a154; /* Edge AI */
+    --c-anomaly:  #4cc9f0; /* SCADA Anomaly Detection */
+    --c-fault:    #f25c78; /* Component Fault Classification */
+    --c-rul:      #9d7bf5; /* RUL Prognostics */
+    --c-physics:  #52d68a; /* Physics-Informed */
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html { scroll-behavior: smooth; }
+  body {
+    background: radial-gradient(1200px 600px at 70% -10%, #16213f 0%, var(--bg) 60%);
+    color: var(--text);
+    font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    line-height: 1.55;
+  }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 0 24px 80px; }
+
+  header { padding: 48px 0 8px; }
+  .kicker {
+    color: var(--c-anomaly); font-weight: 700; letter-spacing: .18em;
+    text-transform: uppercase; font-size: 12px;
+  }
+  h1 { font-size: clamp(28px, 4vw, 44px); margin: 8px 0 10px; }
+  .sub { color: var(--muted); max-width: 860px; font-size: 16px; }
+  .sub b { color: var(--text); }
+
+  .legend { display: flex; flex-wrap: wrap; gap: 10px 18px; margin: 22px 0 6px; }
+  .legend span { display: inline-flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+  .dot { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+
+  .hint { color: var(--muted); font-size: 13px; margin: 6px 0 12px; }
+
+  .graph-card {
+    background: linear-gradient(180deg, var(--panel) 0%, var(--panel2) 100%);
+    border: 1px solid var(--line); border-radius: 16px; padding: 14px;
+    box-shadow: 0 18px 60px rgba(0,0,0,.35);
+  }
+  #graph { width: 100%; height: auto; display: block; }
+
+  .node-box { cursor: pointer; }
+  .node-rect {
+    fill: #16203a; stroke-width: 1.6; rx: 9;
+    transition: filter .15s ease;
+  }
+  .node-box:hover .node-rect { filter: brightness(1.35); }
+  .node-num { font-size: 11px; font-weight: 800; }
+  .node-label { font-size: 12.5px; font-weight: 600; fill: var(--text); }
+  .col-title { font-size: 12px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; }
+  .edge-path { fill: none; stroke: var(--edge); stroke-width: 1.1; opacity: .28; transition: opacity .15s, stroke-width .15s; }
+  .edge-path.hot { opacity: .95; stroke-width: 2.4; }
+  .edge-path.cold { opacity: .06; }
+  .node-box.cold { opacity: .25; }
+  .node-box.hot .node-rect { filter: brightness(1.4); }
+
+  .detail {
+    margin-top: 14px; border-top: 1px dashed var(--line); padding-top: 14px;
+    min-height: 96px; font-size: 14px;
+  }
+  .detail .d-title { font-weight: 800; font-size: 16px; }
+  .detail .d-cat { font-size: 12px; padding: 2px 9px; border-radius: 99px; margin-left: 10px; font-weight: 700; }
+  .detail .d-desc { color: var(--muted); margin: 6px 0 10px; max-width: 900px; }
+  .detail ul { list-style: none; display: flex; flex-direction: column; gap: 4px; }
+  .detail li { font-size: 13px; color: var(--muted); }
+  .detail li b { color: var(--text); font-weight: 600; }
+  .detail .arrow { color: var(--c-anomaly); font-weight: 700; }
+  .detail a { color: var(--c-anomaly); text-decoration: none; }
+  .detail a:hover { text-decoration: underline; }
+
+  h2 { margin: 54px 0 6px; font-size: 26px; }
+  .h2sub { color: var(--muted); margin-bottom: 22px; max-width: 860px; }
+
+  .cat-block { margin-bottom: 34px; }
+  .cat-head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+  .cat-head h3 { font-size: 18px; }
+  .cat-head .count { color: var(--muted); font-size: 13px; }
+  .cat-note { color: var(--muted); font-size: 14px; margin-bottom: 14px; max-width: 880px; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 16px 16px 14px; position: relative; overflow: hidden;
+    transition: transform .15s ease, border-color .15s ease;
+  }
+  .card:hover { transform: translateY(-3px); border-color: #3a4b78; }
+  .card .bar { position: absolute; left: 0; top: 0; bottom: 0; width: 4px; }
+  .card .num {
+    font-size: 11px; font-weight: 800; color: var(--muted); letter-spacing: .08em;
+  }
+  .card h4 { font-size: 15.5px; margin: 3px 0 6px; }
+  .card h4 a { color: var(--text); text-decoration: none; }
+  .card h4 a:hover { color: var(--c-anomaly); }
+  .card p { color: var(--muted); font-size: 13.5px; margin-bottom: 10px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    font-size: 11.5px; padding: 2px 9px; border-radius: 99px; cursor: pointer;
+    background: #1b2745; color: #a9b9dd; border: 1px solid var(--line);
+    text-decoration: none;
+  }
+  .chip:hover { background: #24335c; color: #fff; }
+  .chip-lab { font-size: 11.5px; color: #5e6f95; padding-top: 3px; }
+  .this-repo {
+    outline: 2px solid var(--c-anomaly); outline-offset: -2px;
+  }
+  .this-badge {
+    position: absolute; top: 10px; right: 12px; font-size: 10px; font-weight: 800;
+    color: #06283a; background: var(--c-anomaly); border-radius: 99px; padding: 2px 8px;
+    letter-spacing: .06em;
+  }
+
+  .flow-card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; margin-top: 8px;
+  }
+  .flow-card ol { margin-left: 22px; color: var(--muted); font-size: 14.5px; display: flex; flex-direction: column; gap: 8px; }
+  .flow-card li b { color: var(--text); }
+
+  footer { margin-top: 60px; color: #5e6f95; font-size: 13px; border-top: 1px solid var(--line); padding-top: 18px; }
+  footer a { color: var(--c-anomaly); text-decoration: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <div class="kicker">WT-PM Research Ecosystem</div>
+    <h1>25 Models. One Fabric.</h1>
+    <p class="sub">
+      A wind-turbine predictive-maintenance collection spanning <b>edge sensing</b>,
+      <b>SCADA anomaly detection</b>, <b>component fault classification</b>,
+      <b>RUL prognostics</b> and <b>physics-informed / explainable AI</b>.
+      A collection of 25 models is only a platform if the models can compose — every
+      arrow below is a data contract, and <b>model 13</b> (this repository) is the
+      reference implementation of the shared schema, registry, evaluation protocol and
+      inference API that the rest of the fleet adopts.
+    </p>
+    <div class="legend">
+      <span><i class="dot" style="background:var(--c-edgeai)"></i>Edge AI (4)</span>
+      <span><i class="dot" style="background:var(--c-anomaly)"></i>SCADA Anomaly Detection (7)</span>
+      <span><i class="dot" style="background:var(--c-fault)"></i>Component Fault Classification (6)</span>
+      <span><i class="dot" style="background:var(--c-rul)"></i>RUL Prognostics (5)</span>
+      <span><i class="dot" style="background:var(--c-physics)"></i>Physics-Informed &amp; XAI (3)</span>
+    </div>
+  </header>
+
+  <p class="hint">Hover or tap a model to see what it consumes and what it feeds. Click to open its repository.</p>
+
+  <div class="graph-card">
+    <svg id="graph" viewBox="0 0 1240 640" preserveAspectRatio="xMidYMid meet" aria-label="WT-PM 25-model relationship graph"></svg>
+    <div class="detail" id="detail">
+      <div class="d-title">The fabric at a glance</div>
+      <div class="d-desc">
+        Raw vibration and SCADA telemetry enter on the left, get compressed and
+        pre-processed at the edge, flow through seven anomaly detectors, are triaged by
+        six fault classifiers, projected forward by five prognostics models, and are
+        constrained and explained by the physics &amp; XAI layer on the right.
+        Hover any node for its exact relationships.
+      </div>
+    </div>
+  </div>
+
+  <h2>How the 25 models relate</h2>
+  <p class="h2sub">One record's journey through the collection:</p>
+  <div class="flow-card">
+    <ol>
+      <li><b>Sense &amp; compress (Edge AI).</b> AeroZip (2) squeezes high-dimensional telemetry into a latent stream for cellular/satellite backhaul; the SNN (19) and quantized MobileNet (17) turn raw high-frequency vibration into events and features on-device; TinyML relays (22) run distilled trees from the classifiers for microsecond safety trips.</li>
+      <li><b>Detect (SCADA anomaly intelligence).</b> Seven detectors watch the same 12-channel contract from different angles — LSTM sequences (13), GRU streams (9), VAE reconstruction (23), Deep SVDD boundaries (6), Isolation Forest outliers (12), TCN power-curve tracking (21) and Informer long-horizon forecasts (11). All of them emit the same <code>wt-pm.anomaly.v1</code> record.</li>
+      <li><b>Classify (fault intelligence).</b> Anomaly records are triaged into named faults: XGBoost (25) and Random Forest (18) on tabular features, the 1D-CNN (1) and SVM-RBF (20) on component signatures, contrastive SSL (3) supplying labels-free features, and the GNN (8) lifting per-turbine records to fleet-level cascade risk.</li>
+      <li><b>Project (RUL prognostics).</b> Classified degradation drives remaining-useful-life: HMM states (10) seed the particle filter (15), ConvLSTM (4) and DBN features (5) track wear, and the MLP regressor (14) provides the honest baseline every fancier model must beat.</li>
+      <li><b>Constrain &amp; explain (physics + XAI).</b> The digital-twin surrogate (7) supplies physics residuals back to the detectors, the PG-BNN (16) injects thermodynamic constraints and calibrated uncertainty into prognostics, and SHAP/LIME (24) turns every black-box alert into a root-cause explanation a maintenance engineer can act on.</li>
+    </ol>
+  </div>
+
+  <h2>All 25 models</h2>
+  <p class="h2sub">
+    Numbered alphabetically across the collection — the numbering the repositories
+    themselves use (this repo is <b>model 13</b>). Every card links to its repository;
+    the chips are the models it is directly wired to.
+  </p>
+  <div id="cards"></div>
+
+  <footer>
+    Generated from the WT-PM collection of <a href="https://github.com/rajaram-2005">rajaram-2005</a>.
+    Reference contract: <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">wt-pm-lstm-scada-anomaly</a>
+    (schema <code>wt-pm.scada.v1</code>, records <code>wt-pm.anomaly.v1</code>).
+  </footer>
+</div>
+
+<script>
+const GH = "https://github.com/rajaram-2005/";
+
+const CATS = {
+  edgeai:  { name: "Edge AI",                        color: "var(--c-edgeai)",  hex: "#f2a154",
+             note: "Models that run at or near the turbine: compressing telemetry for backhaul, extracting features on low-power hardware, and tripping safety relays without waiting for the cloud." },
+  anomaly: { name: "SCADA Anomaly Detection",        color: "var(--c-anomaly)", hex: "#4cc9f0",
+             note: "Seven detectors over the shared 12-channel, 10-minute SCADA contract. Different inductive biases — sequences, reconstruction, boundaries, forests, attention — same output record, so downstream layers never care which one fired." },
+  fault:   { name: "Component Fault Classification", color: "var(--c-fault)",   hex: "#f25c78",
+             note: "Turning \u201csomething is wrong\u201d into \u201cthis component, this failure mode\u201d. Consumes anomaly records and edge features; produces the labels that prognostics and XAI operate on." },
+  rul:     { name: "RUL Prognostics",                color: "var(--c-rul)",     hex: "#9d7bf5",
+             note: "Remaining-useful-life estimation: discrete degradation states, spatiotemporal wear tracking, learned feature hierarchies, probabilistic filtering — anchored by a deliberately simple MLP baseline." },
+  physics: { name: "Physics-Informed & Explainable", color: "var(--c-physics)", hex: "#52d68a",
+             note: "The layer that keeps the learning honest: physics surrogates supply residuals and constraints, and SHAP/LIME turn alerts into root-cause explanations." },
+};
+
+/* id = alphabetical position across the 25 wt-pm repos */
+const MODELS = [
+  { id: 1,  repo: "wt-pm-1d-cnn-bearing-vibration",      short: "1D-CNN Bearing Vibration",   cat: "fault",
+    desc: "1D convolutional network on raw high-frequency vibration signals for gearbox bearing fault identification." },
+  { id: 2,  repo: "wt-pm-aerozip-autoencoder-compressor", short: "AeroZip Compressor",        cat: "edgeai",
+    desc: "Deep autoencoder compressing high-dimensional telemetry into latent space for low-bandwidth cellular/satellite transfer." },
+  { id: 3,  repo: "wt-pm-contrastive-ssl-vibration",      short: "Contrastive SSL Vibration", cat: "fault",
+    desc: "Self-supervised contrastive learning extracting features from unannotated wind-turbine vibration streams." },
+  { id: 4,  repo: "wt-pm-convlstm-wear-prognostics",      short: "ConvLSTM Wear Prognostics", cat: "rul",
+    desc: "Convolutional LSTM extracting joint spatiotemporal representations for continuous mechanical degradation tracking." },
+  { id: 5,  repo: "wt-pm-dbn-feature-extraction",         short: "DBN Feature Extraction",    cat: "rul",
+    desc: "Deep Belief Network of stacked RBMs building an automated feature hierarchy for wear tracking." },
+  { id: 6,  repo: "wt-pm-deep-svdd-boundary",             short: "Deep SVDD Boundary",        cat: "anomaly",
+    desc: "Deep Support Vector Data Description mapping telemetry into a hypersphere boundary for abnormal-state isolation." },
+  { id: 7,  repo: "wt-pm-digital-twin-surrogate",         short: "Digital Twin Surrogate",    cat: "physics",
+    desc: "Deep neural surrogate replacing heavy FEA for real-time digital-twin residual tracking." },
+  { id: 8,  repo: "wt-pm-gnn-turbines-cascade",           short: "GNN Turbine Cascade",       cat: "fault",
+    desc: "Graph neural network over component/turbine dependency graphs to track cascading failure propagation." },
+  { id: 9,  repo: "wt-pm-gru-scada-telemetry",            short: "GRU SCADA Telemetry",       cat: "anomaly",
+    desc: "Gated Recurrent Unit model for lightweight, high-throughput continuous SCADA stream processing." },
+  { id: 10, repo: "wt-pm-hmm-degradation-states",         short: "HMM Degradation States",    cat: "rul",
+    desc: "Hidden Markov Model inferring discrete unobservable degradation-state transitions from continuous SCADA signals." },
+  { id: 11, repo: "wt-pm-informer-long-sequence",         short: "Informer Long Sequence",    cat: "anomaly",
+    desc: "ProbSparse self-attention Informer for ultra-long multi-step wind-farm power forecasting." },
+  { id: 12, repo: "wt-pm-isolation-forest-telemetry",     short: "Isolation Forest",          cat: "anomaly",
+    desc: "Unsupervised Isolation Forest for high-speed multi-dimensional SCADA telemetry outlier detection." },
+  { id: 13, repo: "wt-pm-lstm-scada-anomaly",             short: "LSTM SCADA Anomaly",        cat: "anomaly", hub: true,
+    desc: "LSTM sequence anomaly detection on SCADA data — and the reference implementation of the shared contract: schema, registry, evaluation protocol, uncertainty, drift and inference API." },
+  { id: 14, repo: "wt-pm-mlp-rul-regression",             short: "MLP RUL Regression",        cat: "rul",
+    desc: "Multi-layer perceptron baseline regressor mapping accumulated operating hours to component failure limits." },
+  { id: 15, repo: "wt-pm-particle-filter-rul",            short: "Particle Filter RUL",       cat: "rul",
+    desc: "Stochastic particle filtering fused with deep networks to continuously update probabilistic RUL decay distributions." },
+  { id: 16, repo: "wt-pm-pg-bnn-wind-turbine",            short: "PG-BNN Physics-Guided",     cat: "physics",
+    desc: "Physics-guided Bayesian neural network embedding thermodynamic/mechanical loss constraints with predictive uncertainty." },
+  { id: 17, repo: "wt-pm-quantized-mobilenet-edge",       short: "Quantized MobileNet Edge",  cat: "edgeai",
+    desc: "Quantized MobileNet variant for compressed high-frequency feature extraction on edge hardware." },
+  { id: 18, repo: "wt-pm-random-forest-telemetry",        short: "Random Forest Telemetry",   cat: "fault",
+    desc: "Ensemble Random Forest classifier providing feature-importance rankings for SCADA sensor diagnostics." },
+  { id: 19, repo: "wt-pm-snn-event-vibration",            short: "SNN Event Vibration",       cat: "edgeai",
+    desc: "Spiking neural network processing asynchronous event-based threshold spikes for ultra-low-power vibration monitoring." },
+  { id: 20, repo: "wt-pm-svm-rbf-generator-stator",       short: "SVM-RBF Generator Stator",  cat: "fault",
+    desc: "SVM with RBF kernel separating generator stator/rotor insulation fault classes." },
+  { id: 21, repo: "wt-pm-tcn-power-curve",                short: "TCN Power Curve",           cat: "anomaly",
+    desc: "Temporal Convolutional Network for parallel sequence processing and aerodynamic power-curve degradation tracking." },
+  { id: 22, repo: "wt-pm-tinyml-esp32-safety-relay",      short: "TinyML ESP32 Safety Relay", cat: "edgeai",
+    desc: "C++-exported TinyML decision trees on bare-metal ESP32 microcontrollers triggering immediate safety trips." },
+  { id: 23, repo: "wt-pm-vae-reconstruction-loss",        short: "VAE Reconstruction",        cat: "anomaly",
+    desc: "Variational autoencoder using reconstruction loss to isolate rare non-linear sensor anomalies in SCADA logs." },
+  { id: 24, repo: "wt-pm-xai-shap-interpretable",         short: "XAI SHAP Interpretable",    cat: "physics",
+    desc: "SHAP + LIME interpretation wrapper providing root-cause diagnostic explanations for black-box alerts." },
+  { id: 25, repo: "wt-pm-xgboost-tabular-faults",         short: "XGBoost Tabular Faults",    cat: "fault",
+    desc: "Gradient-boosted trees for real-time multi-class component-state classification on structured sensor features." },
+];
+
+/* Directed functional relationships: [from, to, label] */
+const EDGES = [
+  [2, 13, "compressed SCADA stream for sequence scoring"],
+  [2,  9, "low-bandwidth stream for GRU monitoring"],
+  [19, 1, "vibration event spikes for bearing CNN"],
+  [17, 1, "edge-extracted high-frequency features"],
+  [17, 3, "unlabelled features for SSL pretraining"],
+  [25, 22, "distilled trees exported to ESP32 relay"],
+  [18, 22, "safety-trip rules compiled from forest"],
+  [13, 25, "anomaly records for fault triage"],
+  [13,  8, "per-turbine records into the fleet graph"],
+  [13, 10, "anomaly scores feed degradation states"],
+  [13,  9, "sibling: same schema, registry & API contract"],
+  [23, 13, "sibling: reconstruction-loss scoring compared head-to-head"],
+  [6,  20, "boundary outliers routed to stator/rotor check"],
+  [12,  8, "fleet-wide outliers into cascade analysis"],
+  [11, 21, "long-horizon power forecast vs actual curve"],
+  [21, 14, "power-curve degradation as RUL feature"],
+  [3,   1, "SSL representations for bearing classifier"],
+  [3,  20, "SSL representations for SVM kernel"],
+  [1,   4, "bearing fault labels drive wear tracking"],
+  [5,   4, "DBN feature hierarchy for wear model"],
+  [5,  14, "learned features into RUL regressor"],
+  [10, 15, "state transitions seed the particle filter"],
+  [8,  15, "cascade risk conditions RUL updates"],
+  [14, 15, "baseline the filter must beat"],
+  [7,  13, "physics residuals sharpen detection"],
+  [7,  16, "twin constraints for the PG-BNN"],
+  [16, 15, "physics-guided uncertainty into RUL"],
+  [25, 24, "SHAP explanations of boosted-tree alerts"],
+  [18, 24, "feature importances for root cause"],
+  [1,  24, "vibration alert explanations"],
+];
+
+const byId = Object.fromEntries(MODELS.map(m => [m.id, m]));
+
+/* ---------- graph layout: 5 columns ---------- */
+const COLS = [
+  { key: "edgeai",  title: "Edge & Data",          ids: [2, 17, 19, 22] },
+  { key: "anomaly", title: "Anomaly Detection",    ids: [13, 9, 23, 6, 12, 21, 11] },
+  { key: "fault",   title: "Fault Classification", ids: [25, 18, 1, 20, 3, 8] },
+  { key: "rul",     title: "RUL Prognostics",      ids: [10, 15, 14, 4, 5] },
+  { key: "physics", title: "Physics & XAI",        ids: [7, 16, 24] },
+];
+
+const svg = document.getElementById("graph");
+const NS = "http://www.w3.org/2000/svg";
+const W = 1240, H = 640, NW = 176, NH = 46, TOP = 64;
+const colX = i => 40 + i * ((W - 80 - NW) / (COLS.length - 1));
+const pos = {}; // id -> {x,y}
+
+COLS.forEach((col, ci) => {
+  const x = colX(ci);
+  const usable = H - TOP - 20;
+  const step = usable / col.ids.length;
+  col.ids.forEach((id, ri) => {
+    pos[id] = { x, y: TOP + step * ri + (step - NH) / 2 };
+  });
+});
+
+function el(tag, attrs, parent) {
+  const e = document.createElementNS(NS, tag);
+  for (const k in attrs) e.setAttribute(k, attrs[k]);
+  (parent || svg).appendChild(e);
+  return e;
+}
+
+/* column titles */
+COLS.forEach((col, ci) => {
+  const t = el("text", { x: colX(ci) + NW / 2, y: 34, "text-anchor": "middle", class: "col-title", fill: CATS[col.key].hex });
+  t.textContent = col.title;
+  el("line", { x1: colX(ci) + 8, y1: 44, x2: colX(ci) + NW - 8, y2: 44, stroke: CATS[col.key].hex, "stroke-width": 2, opacity: .5 });
+});
+
+/* edges under nodes */
+const edgeGroup = el("g", {});
+const edgeEls = EDGES.map(([a, b]) => {
+  const pa = pos[a], pb = pos[b];
+  const ax = pa.x + (pb.x >= pa.x ? NW : 0), ay = pa.y + NH / 2;
+  const bx = pb.x + (pb.x >= pa.x ? 0 : NW), by = pb.y + NH / 2;
+  const dx = Math.max(46, Math.abs(bx - ax) * 0.45) * (bx >= ax ? 1 : -1);
+  const p = el("path", {
+    d: `M ${ax} ${ay} C ${ax + dx} ${ay}, ${bx - dx} ${by}, ${bx} ${by}`,
+    class: "edge-path",
+  }, edgeGroup);
+  return p;
+});
+
+/* nodes */
+const nodeEls = {};
+MODELS.forEach(m => {
+  const { x, y } = pos[m.id];
+  const hex = CATS[m.cat].hex;
+  const g = el("g", { class: "node-box", transform: `translate(${x},${y})`, tabindex: 0 });
+  el("rect", { class: "node-rect", width: NW, height: NH, rx: 9, stroke: hex,
+               ...(m.hub ? { "stroke-width": 3 } : {}) }, g);
+  el("rect", { width: 26, height: NH, rx: 9, fill: hex, opacity: .18 }, g);
+  const num = el("text", { x: 13, y: NH / 2 + 4, "text-anchor": "middle", class: "node-num", fill: hex }, g);
+  num.textContent = m.id;
+  const lbl = el("text", { x: 32, y: NH / 2 + 4.5, class: "node-label" }, g);
+  lbl.textContent = m.short;
+  if (m.hub) {
+    const star = el("text", { x: NW - 10, y: 14, "text-anchor": "middle", "font-size": 11, fill: hex }, g);
+    star.textContent = "★";
+  }
+  g.addEventListener("mouseenter", () => focusModel(m.id));
+  g.addEventListener("focus", () => focusModel(m.id));
+  g.addEventListener("mouseleave", clearFocus);
+  g.addEventListener("blur", clearFocus);
+  g.addEventListener("click", () => window.open(GH + m.repo, "_blank"));
+  nodeEls[m.id] = g;
+});
+
+const detail = document.getElementById("detail");
+const defaultDetail = detail.innerHTML;
+
+function relationsOf(id) {
+  const out = [], inn = [];
+  EDGES.forEach(([a, b, label], i) => {
+    if (a === id) out.push({ other: b, label, i });
+    if (b === id) inn.push({ other: a, label, i });
+  });
+  return { out, inn };
+}
+
+function focusModel(id) {
+  const m = byId[id];
+  const { out, inn } = relationsOf(id);
+  const related = new Set([id, ...out.map(r => r.other), ...inn.map(r => r.other)]);
+  const hotEdges = new Set([...out, ...inn].map(r => r.i));
+
+  EDGES.forEach((_, i) => edgeEls[i].setAttribute("class", "edge-path " + (hotEdges.has(i) ? "hot" : "cold")));
+  MODELS.forEach(x => nodeEls[x.id].setAttribute("class", "node-box " + (related.has(x.id) ? (x.id === id ? "hot" : "") : "cold")));
+
+  const hex = CATS[m.cat].hex;
+  let html = `<div class="d-title">${m.id}. ${m.short}` +
+    `<span class="d-cat" style="background:${hex}22;color:${hex}">${CATS[m.cat].name}</span></div>` +
+    `<div class="d-desc">${m.desc}${m.hub ? " <b style='color:var(--text)'>★ Contract hub:</b> its schema, registry, evaluation protocol and API are the interfaces all 24 sibling models adopt." : ""}</div><ul>`;
+  inn.forEach(r => { html += `<li><b>${byId[r.other].id}. ${byId[r.other].short}</b> <span class="arrow">→</span> ${r.label}</li>`; });
+  out.forEach(r => { html += `<li><span class="arrow">→</span> <b>${byId[r.other].id}. ${byId[r.other].short}</b> — ${r.label}</li>`; });
+  if (!inn.length && !out.length) html += `<li>No direct functional edge — coupled through the shared contract.</li>`;
+  html += `</ul><div style="margin-top:8px"><a href="${GH + m.repo}" target="_blank">${GH + m.repo} ↗</a></div>`;
+  detail.innerHTML = html;
+}
+
+function clearFocus() {
+  EDGES.forEach((_, i) => edgeEls[i].setAttribute("class", "edge-path"));
+  MODELS.forEach(x => nodeEls[x.id].setAttribute("class", "node-box"));
+  detail.innerHTML = defaultDetail;
+}
+
+/* ---------- cards ---------- */
+const cardsRoot = document.getElementById("cards");
+const CAT_ORDER = ["edgeai", "anomaly", "fault", "rul", "physics"];
+CAT_ORDER.forEach(catKey => {
+  const cat = CATS[catKey];
+  const models = MODELS.filter(m => m.cat === catKey);
+  const block = document.createElement("div");
+  block.className = "cat-block";
+  block.innerHTML =
+    `<div class="cat-head"><i class="dot" style="background:${cat.hex}"></i>` +
+    `<h3>${cat.name}</h3><span class="count">${models.length} models</span></div>` +
+    `<p class="cat-note">${cat.note}</p>`;
+  const grid = document.createElement("div");
+  grid.className = "grid";
+  models.forEach(m => {
+    const { out, inn } = relationsOf(m.id);
+    const rel = [...new Set([...inn.map(r => r.other), ...out.map(r => r.other)])];
+    const card = document.createElement("div");
+    card.className = "card" + (m.hub ? " this-repo" : "");
+    card.innerHTML =
+      `<span class="bar" style="background:${cat.hex}"></span>` +
+      (m.hub ? `<span class="this-badge">THIS REPO</span>` : "") +
+      `<div class="num">MODEL ${String(m.id).padStart(2, "0")}</div>` +
+      `<h4><a href="${GH + m.repo}" target="_blank">${m.short}</a></h4>` +
+      `<p>${m.desc}</p>` +
+      `<div class="chips"><span class="chip-lab">related:</span>` +
+      rel.map(o => `<a class="chip" href="${GH + byId[o].repo}" target="_blank" title="${byId[o].short}">${o} · ${byId[o].short.split(" ")[0]}</a>`).join("") +
+      `</div>`;
+    grid.appendChild(card);
+  });
+  block.appendChild(grid);
+  cardsRoot.appendChild(block);
+});
+</script>
+</body>
+</html>
