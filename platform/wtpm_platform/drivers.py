@@ -71,6 +71,7 @@ class JsonTcpServer:
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((self.host, self.port))
+        self.port = self._sock.getsockname()[1]
         self._sock.listen(8)
         self._sock.settimeout(0.5)
         self._stop.clear()

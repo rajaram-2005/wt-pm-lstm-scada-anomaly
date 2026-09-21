@@ -17,4 +17,4 @@ jobs:
       - name: model-13 tests
         run: python -m pytest tests -q
       - name: platform tests
-        run: python -m pytest platform/tests -q
+        run: python -m pytest platform/tests --tb=short

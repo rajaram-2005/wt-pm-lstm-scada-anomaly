@@ -40,9 +40,10 @@ def test_zero_cost_emulators_and_sil(tmp_path):
     assert gate_command({"rpm": 26.5, "pitch_angle": 5})["forwarded"] is False
 
     bus = InMemoryBus()
-    srv = JsonTcpServer(bus, host="127.0.0.1", port=15021).start()
+    srv = JsonTcpServer(bus, host="127.0.0.1", port=0).start()
+    port = srv._sock.getsockname()[1]
     try:
-        got = client_read("127.0.0.1", 15021)
+        got = client_read("127.0.0.1", port)
         assert "engineering" in got and "wind_speed_ms" in got["engineering"]
         b = snapshot_to_batch(got["regs"])
         assert b.n_steps == 1
