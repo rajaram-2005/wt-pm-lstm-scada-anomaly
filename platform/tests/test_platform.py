@@ -27,6 +27,44 @@ CHANNELS = (
 )
 
 
+def test_zero_cost_emulators_and_sil(tmp_path):
+    from wtpm_platform.cli import main, SIBLING_REPOS
+    from wtpm_platform.drivers import InMemoryBus, JsonTcpServer, client_read, snapshot_to_batch
+    from wtpm_platform.field import write_hot_sample_csv, hot_tag_map
+    from wtpm_platform.safety_gate import safety_gate_check, gate_command
+    from wtpm_platform.scada import ingest_scada_csv, probe_headers
+
+    drop = safety_gate_check(pitch_angle=5, rpm=26.5)
+    assert drop["dropped"] and "CRITICAL" in drop["message"]
+    assert safety_gate_check(pitch_angle=5, rpm=12)["ok"]
+    assert gate_command({"rpm": 26.5, "pitch_angle": 5})["forwarded"] is False
+
+    bus = InMemoryBus()
+    srv = JsonTcpServer(bus, host="127.0.0.1", port=15021).start()
+    try:
+        got = client_read("127.0.0.1", 15021)
+        assert "engineering" in got and "wind_speed_ms" in got["engineering"]
+        b = snapshot_to_batch(got["regs"])
+        assert b.n_steps == 1
+    finally:
+        srv.stop()
+
+    csvp = write_hot_sample_csv(str(tmp_path / "hot.csv"))
+    with open(csvp, encoding="utf-8") as f:
+        headers = f.readline().strip().split(",")
+    pr = probe_headers(headers, hot_tag_map())
+    assert pr["ready"]
+    live = ingest_scada_csv(csvp, turbine_id="T01", tag_map=hot_tag_map())
+    assert live.n_steps == 48
+
+    dest = tmp_path / "sib"
+    assert main(["fetch-models", "--stub", "--dir", str(dest)]) == 0
+    assert len(SIBLING_REPOS) == 24
+    assert (dest / SIBLING_REPOS[0] / "model.py").is_file()
+    assert main(["sil", "--rpm", "26.5", "--pitch", "5"]) == 1
+    assert main(["sil", "--rpm", "12", "--pitch", "5"]) == 0
+
+
 def test_config_and_split_by_turbine(tmp_path):
     from wtpm_platform.config import load_config
     from wtpm_platform.scada import probe_headers, split_by_turbine

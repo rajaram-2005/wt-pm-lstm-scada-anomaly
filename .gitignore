@@ -36,3 +36,4 @@ scada_out/
 scada_done/
 scada_writeback.json
 scada_demo_in.csv
+hot_sample.csv

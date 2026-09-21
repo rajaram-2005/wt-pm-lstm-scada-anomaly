@@ -174,16 +174,39 @@ SIBLING_REPOS = (
 )
 
 
+def _stub_sibling(path: str, name: str) -> None:
+    os.makedirs(path, exist_ok=True)
+    readme = os.path.join(path, "README.md")
+    model = os.path.join(path, "model.py")
+    if not os.path.exists(readme):
+        with open(readme, "w", encoding="utf-8") as f:
+            f.write(f"# {name}\n\nLocal scaffold (GitHub write not available from this session).\n")
+    if not os.path.exists(model):
+        with open(model, "w", encoding="utf-8") as f:
+            f.write(
+                f'"""Stub for {name} — replace with the real research module."""\n'
+                "class Model:\n"
+                "    def available(self) -> bool:\n"
+                "        return False\n"
+            )
+
+
 def cmd_fetch_models(args) -> int:
-    """Clone the 24 sibling research repos into ``external/`` (read-only)."""
+    """Clone the 24 sibling research repos into ``external/`` (or local stubs)."""
     import subprocess
     dest = os.path.abspath(args.dir)
     os.makedirs(dest, exist_ok=True)
     ok = 0
+    stub = bool(getattr(args, "stub", False))
     for r in SIBLING_REPOS:
         path = os.path.join(dest, r)
         if os.path.isdir(path) and os.path.exists(os.path.join(path, "model.py")):
             print(f"  [skip] {r}")
+            ok += 1
+            continue
+        if stub:
+            _stub_sibling(path, r)
+            print(f"  [stub] {r}")
             ok += 1
             continue
         url = f"https://github.com/rajaram-2005/{r}.git"
@@ -192,10 +215,51 @@ def cmd_fetch_models(args) -> int:
         if rc == 0:
             ok += 1
         else:
-            print(f"  [fail] {r} exit={rc}")
+            print(f"  [fail] {r} exit={rc}  (retry with --stub)")
     print(f"[fetch-models] {ok}/{len(SIBLING_REPOS)} repos in {dest}")
     print(f"               export WTPM_EXTERNAL_DIR={dest}")
     return 0 if ok == len(SIBLING_REPOS) else 1
+
+
+def cmd_mock_bus(args) -> int:
+    from wtpm_platform.drivers import JsonTcpServer, InMemoryBus
+    bus = InMemoryBus()
+    srv = JsonTcpServer(bus, host=args.host, port=args.port).start()
+    print(f"[mock-bus] JSON/TCP on {args.host}:{args.port}  (op=read|write)")
+    print("[mock-bus] optional: pip install pymodbus asyncua paho-mqtt")
+    try:
+        if args.once:
+            from wtpm_platform.drivers import client_read
+            print(json.dumps(client_read(args.host if args.host != "0.0.0.0" else "127.0.0.1",
+                                         args.port), indent=2))
+            return 0
+        import time
+        while True:
+            time.sleep(3600)
+    except KeyboardInterrupt:
+        srv.stop()
+    return 0
+
+
+def cmd_sil(args) -> int:
+    from wtpm_platform.safety_gate import safety_gate_check
+    r = safety_gate_check(pitch_angle=args.pitch, rpm=args.rpm, vibration_mm_s=args.vib)
+    print(json.dumps(r, indent=2))
+    print(r["message"])
+    return 0 if r["ok"] else 1
+
+
+def cmd_field(args) -> int:
+    from wtpm_platform.field import hot_tag_map, write_hot_sample_csv
+    from wtpm_platform.scada import probe_headers
+    path = args.sample or "hot_sample.csv"
+    write_hot_sample_csv(path, n=args.rows)
+    import csv as _csv
+    with open(path, newline="", encoding="utf-8") as f:
+        headers = next(_csv.reader(f))
+    report = probe_headers(headers, hot_tag_map())
+    print(json.dumps({"csv": path, "probe": report, "map": hot_tag_map()}, indent=2, default=str))
+    return 0 if report["ready"] else 1
 
 
 def cmd_fleet(args) -> int:
@@ -461,7 +525,23 @@ def main(argv=None) -> int:
     sp = sub.add_parser("fetch-models",
                         help="clone the 24 sibling wt-pm-* repos into external/")
     sp.add_argument("--dir", default="external")
+    sp.add_argument("--stub", action="store_true",
+                    help="write local model.py stubs instead of git clone")
     sp.set_defaults(fn=cmd_fetch_models)
+    sp = sub.add_parser("mock-bus", help="stdlib JSON/TCP SCADA register emulator")
+    sp.add_argument("--host", default="0.0.0.0")
+    sp.add_argument("--port", type=int, default=15020)
+    sp.add_argument("--once", action="store_true")
+    sp.set_defaults(fn=cmd_mock_bus)
+    sp = sub.add_parser("sil", help="software SIL gate (drop overspeed / negative pitch)")
+    sp.add_argument("--rpm", type=float, default=12.0)
+    sp.add_argument("--pitch", type=float, default=2.0)
+    sp.add_argument("--vib", type=float, default=2.0)
+    sp.set_defaults(fn=cmd_sil)
+    sp = sub.add_parser("field", help="Hill-of-Towie-shaped sample CSV + tag map")
+    sp.add_argument("--sample", default="hot_sample.csv")
+    sp.add_argument("--rows", type=int, default=48)
+    sp.set_defaults(fn=cmd_field)
     sp = sub.add_parser("agent", help="Hermes Thought/Action/Observation loop + XAI")
     common(sp)
     sp.add_argument("--quiet", action="store_true")
