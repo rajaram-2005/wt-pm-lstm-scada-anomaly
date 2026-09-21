@@ -1,0 +1,18 @@
+services:
+  wtpm:
+    build: .
+    ports:
+      - "8100:8100"
+    volumes:
+      - ./scada_in:/app/scada_in
+      - ./scada_out:/app/scada_out
+      - ./platform/docs/scada-tag-map.json:/app/tag_map.json:ro
+    command: ["wt-pm", "serve", "--port", "8100", "--days", "6"]
+  watcher:
+    build: .
+    volumes:
+      - ./scada_in:/app/scada_in
+      - ./scada_out:/app/scada_out
+      - ./scada_done:/app/scada_done
+      - ./platform/wt-pm.yaml.example:/app/wt-pm.yaml:ro
+    command: ["wt-pm", "watch", "--config", "/app/wt-pm.yaml"]

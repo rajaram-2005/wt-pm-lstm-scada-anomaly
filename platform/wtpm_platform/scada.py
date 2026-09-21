@@ -169,7 +169,31 @@ def ingest_scada_rows(
     batch.meta["scada_unmapped_headers"] = [h for h in headers if h not in resolved
                                             and h not in (time_col, turb_col)]
     batch.meta["source"] = "scada"
+    batch.meta["scada_turbine_col"] = turb_col
     return batch
+
+
+def split_by_turbine(
+    rows: Sequence[Mapping[str, Any]],
+    tag_map: Optional[Mapping[str, str]] = None,
+    default_id: str = "WT-SCADA",
+) -> Dict[str, SensorBatch]:
+    """One SensorBatch per turbine_id column (fleet CSV from the historian)."""
+    extra = dict(tag_map or {})
+    turb_col = None
+    if rows:
+        for h in rows[0].keys():
+            if resolve_column(h, extra) == "__turbine__":
+                turb_col = h
+                break
+    if not turb_col:
+        return {default_id: ingest_scada_rows(rows, turbine_id=default_id, tag_map=tag_map)}
+    groups: Dict[str, list] = {}
+    for row in rows:
+        tid = str(row.get(turb_col) or default_id)
+        groups.setdefault(tid, []).append(row)
+    return {tid: ingest_scada_rows(g, turbine_id=tid, tag_map=tag_map)
+            for tid, g in groups.items()}
 
 
 def _parse_time(v: Any) -> Optional[int]:

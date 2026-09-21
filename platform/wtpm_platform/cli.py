@@ -348,6 +348,73 @@ def cmd_scada(args) -> int:
     return 0
 
 
+def cmd_watch(args) -> int:
+    """Historian hot-folder: drop CSV in, get WTPM writeback out."""
+    import glob
+    import shutil
+    import time
+    from wtpm_platform.config import load_config
+    from wtpm_platform.contracts import OperatingContext
+    from wtpm_platform.orchestrator import Orchestrator
+    from wtpm_platform.scada import (
+        emit_scada_tags, ingest_scada_csv, load_tag_map, split_by_turbine,
+        write_tags_csv,
+    )
+    import csv as _csv
+
+    cfg = load_config(args.config or None)
+    drop = args.dir or cfg["drop_dir"]
+    out_dir = cfg["out_dir"]
+    done = cfg["processed_dir"]
+    poll = args.poll or float(cfg["poll_seconds"])
+    os.makedirs(drop, exist_ok=True)
+    os.makedirs(out_dir, exist_ok=True)
+    os.makedirs(done, exist_ok=True)
+    tag_map = load_tag_map(cfg["map"]) if os.path.isfile(str(cfg.get("map", ""))) else {}
+    print(f"[watch] drop={drop} out={out_dir} poll={poll}s config={cfg.get('_path')}")
+
+    orch = None
+    ctx_fit = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
+    ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
+
+    def handle(path: str) -> None:
+        nonlocal orch
+        print(f"[watch] {path}")
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rows = list(_csv.DictReader(f))
+        batches = split_by_turbine(rows, tag_map=tag_map)
+        if orch is None:
+            orch = Orchestrator(max_workers=args.workers)
+        for tid, batch in batches.items():
+            batch = orch.prepare(batch)
+            orch.fit(batch, ctx_fit, verbose=False)
+            result = orch.analyse(batch, ctx)
+            tags = emit_scada_tags(result, tid)
+            stem = os.path.splitext(os.path.basename(path))[0] + "_" + tid
+            jp = os.path.join(out_dir, stem + ".json")
+            cp = os.path.join(out_dir, stem + "_points.csv")
+            with open(jp, "w", encoding="utf-8") as f:
+                json.dump(tags, f, indent=2, default=str)
+            write_tags_csv(tags, cp)
+            print(f"[watch] {tid} -> {jp}  risk={tags['tags'].get('WTPM.RISK')} "
+                  f"fault={tags['tags'].get('WTPM.FAULT')}")
+        shutil.move(path, os.path.join(done, os.path.basename(path)))
+
+    seen = set()
+    while True:
+        for path in sorted(glob.glob(os.path.join(drop, "*.csv"))):
+            if path in seen:
+                continue
+            try:
+                handle(path)
+                seen.add(path)
+            except Exception as exc:  # noqa: BLE001
+                print(f"[watch] FAIL {path}: {type(exc).__name__}: {exc}", file=sys.stderr)
+        if args.once:
+            return 0
+        time.sleep(max(poll, 1))
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="wt-pm",
@@ -396,6 +463,13 @@ def main(argv=None) -> int:
     sp.add_argument("--write-map", default="", help="write example tag_map.json and exit")
     sp.add_argument("--no-fit", dest="fit", action="store_false")
     sp.set_defaults(fn=cmd_scada, fit=True)
+    sp = sub.add_parser("watch", help="poll a historian drop folder and write WTPM.* tags")
+    sp.add_argument("--config", default="")
+    sp.add_argument("--dir", default="", help="override drop_dir")
+    sp.add_argument("--once", action="store_true")
+    sp.add_argument("--poll", type=float, default=0)
+    sp.add_argument("--workers", type=int, default=4)
+    sp.set_defaults(fn=cmd_watch)
 
     args = p.parse_args(argv)
     return args.fn(args)

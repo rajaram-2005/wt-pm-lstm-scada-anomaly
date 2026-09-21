@@ -27,6 +27,23 @@ CHANNELS = (
 )
 
 
+def test_config_and_split_by_turbine(tmp_path):
+    from wtpm_platform.config import load_config
+    from wtpm_platform.scada import split_by_turbine
+    p = tmp_path / "wt-pm.yaml"
+    p.write_text("plant: demo\npoll_seconds: 12\n")
+    cfg = load_config(str(p))
+    assert cfg["plant"] == "demo" and cfg["poll_seconds"] == 12
+    rows = [
+        {"turbine": "A", "wind_speed": 8, "power": 100, "rpm": 10},
+        {"turbine": "B", "wind_speed": 9, "power": 110, "rpm": 11},
+        {"turbine": "A", "wind_speed": 8.2, "power": 102, "rpm": 10.1},
+    ]
+    g = split_by_turbine(rows)
+    assert set(g) == {"A", "B"}
+    assert g["A"].n_steps == 2 and g["B"].n_steps == 1
+
+
 def test_scada_column_map_and_writeback():
     from wtpm_platform.scada import (
         emit_scada_tags, ingest_scada_rows, resolve_column, write_tags_csv,

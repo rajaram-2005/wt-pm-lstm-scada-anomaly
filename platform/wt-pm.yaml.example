@@ -1,0 +1,9 @@
+# Copy to wt-pm.yaml next to the historian drop folder.
+plant: site-1
+drop_dir: scada_in
+out_dir: scada_out
+processed_dir: scada_done
+map: tag_map.json
+poll_seconds: 30
+serve_port: 8100
+workers: 4
