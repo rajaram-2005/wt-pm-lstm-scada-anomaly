@@ -25,3 +25,15 @@ reports/*.md
 data/*.csv
 data/*.npz
 *.log
+
+# unified platform: external research repos are cloned, never vendored
+external/
+runs_platform/
+edge_artifacts/
+production_result.json
+scada_in/
+scada_out/
+scada_done/
+scada_writeback.json
+scada_demo_in.csv
+hot_sample.csv

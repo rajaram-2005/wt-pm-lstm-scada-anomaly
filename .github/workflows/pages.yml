@@ -1,0 +1,48 @@
+# GitHub Pages. Repo is currently "legacy / gh-pages branch"; Actions deploy
+# is only allowed from `main`. Feature branches BUILD the site (green check)
+# and skip deploy so the environment branch policy does not fail the PR.
+name: pages
+on:
+  push:
+    branches: [main, arena/01a0c317-wt-pm-lstm-scada-anomaly]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: pages-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: stage launch site at /
+        run: |
+          test -f docs/launch/index.html
+          test -f docs/launch/pitch.html
+          mkdir -p _site
+          cp -a docs/launch/. _site/
+          if [ -f docs/ecosystem.html ]; then cp docs/ecosystem.html _site/ecosystem.html; fi
+          ls -la _site
+      - uses: actions/upload-artifact@v4
+        with:
+          name: launch-site
+          path: _site
+      - uses: actions/upload-pages-artifact@v3
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4

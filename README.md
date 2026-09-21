@@ -1,7 +1,17 @@
 # wt-pm-lstm-scada-anomaly
 
 **Model 13 of the WT-PM research ecosystem** — LSTM sequence anomaly detection
-on wind-turbine SCADA data.
+on wind-turbine SCADA data — **and the host of the unified 25-model platform**.
+
+| | Model 13 (this package) | Unified platform |
+| --- | --- | --- |
+| Path | `src/wt_pm_lstm/` | `platform/` |
+| Install | `pip install -e .` | `pip install -e platform` |
+| CLI | `wtpm` | `wt-pm` |
+| Role | Detector + schema/registry/eval/API | Orchestrator over all 25 `wt-pm-*` models |
+
+**GitHub architecture (layers, mermaid, 25 adapters, commands):**
+[ARCHITECTURE.md](ARCHITECTURE.md) · [ecosystem](docs/ecosystem.html) · [platform report](platform/docs/ARCHITECTURE_REPORT.md)
 
 The WT-PM ecosystem is a 25-model wind-turbine predictive-maintenance research
 collection spanning vibration intelligence, SCADA analytics, anomaly detection,
@@ -12,6 +22,9 @@ implementation of the shared contract**: the data schema, model registry,
 evaluation protocol, uncertainty reporting, drift monitoring and inference API
 that the other models can adopt rather than reinvent. A collection of 25 models
 is only a platform if the models can compose.
+
+The 24 sibling repositories are **not replaced**. The platform calls their
+original `model.py` through adapters (`external/`, gitignored).
 
 ---
 
@@ -45,6 +58,16 @@ pip install -e .                    # numpy only; no framework required
 wtpm demo --days 60 --epochs 30     # full protocol -> artifacts/demo/REPORT.md
 wtpm serve                          # HTTP API + scoring console on :8000
 pytest -q                           # gradient checks, contract tests, protocol tests
+```
+
+The **unified 25-model platform** installs as its own terminal command:
+
+```bash
+pip install -e platform             # provides the `wt-pm` executable
+# or: pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
+wt-pm --version
+wt-pm inspect
+wt-pm serve --port 8100
 ```
 
 ```python

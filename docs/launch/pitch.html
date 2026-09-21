@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>WT-PM pitch — 25 models, one product</title>
+  <style>
+    @page { size: A4 landscape; margin: 0; }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; background: #0a0e12; color: #e8f4f2; font-family: "Segoe UI", system-ui, sans-serif; }
+    .slide {
+      width: 100vw; min-height: 100vh; padding: 6vh 7vw;
+      display: flex; flex-direction: column; justify-content: center;
+      page-break-after: always; position: relative; overflow: hidden;
+    }
+    .slide img.full { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+    .veil { position: absolute; inset: 0; background: linear-gradient(90deg, rgba(5,8,12,.88) 0%, rgba(5,8,12,.35) 70%); }
+    .on { position: relative; z-index: 1; max-width: 38rem; }
+    .kicker { letter-spacing: .32em; text-transform: uppercase; color: #2ee6c8; font-size: .75rem; }
+    h1 { font-size: 3.2rem; line-height: 1.05; margin: .4rem 0 1rem; }
+    h2 { font-size: 2.2rem; margin: 0 0 1rem; }
+    p { color: #c9ddd9; font-size: 1.15rem; max-width: 36rem; }
+    ul { color: #c9ddd9; font-size: 1.15rem; line-height: 1.7; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.2rem; }
+    .card { border: 1px solid rgba(46,230,200,.2); padding: 1.1rem 1.2rem; border-radius: 12px; background: #0b1216; }
+    .card b { color: #2ee6c8; }
+    footer.bar { position: absolute; bottom: 1.4rem; left: 7vw; right: 7vw; display: flex; justify-content: space-between; color: #8aa4a8; font-size: .8rem; z-index: 1; }
+    a { color: #2ee6c8; }
+    @media print {
+      .slide { width: 297mm; height: 210mm; min-height: 0; }
+    }
+  </style>
+</head>
+<body>
+  <section class="slide">
+    <img class="full" src="hero-control-room.png" alt="" />
+    <div class="veil"></div>
+    <div class="on">
+      <div class="kicker">Confidential · product pitch</div>
+      <h1>25 models.<br />One writeback.</h1>
+      <p>WT-PM is the fused predictive-maintenance product for wind SCADA — not a zoo of research repos.</p>
+    </div>
+    <footer class="bar"><span>WT-PM</span><span>1 / 6</span></footer>
+  </section>
+
+  <section class="slide">
+    <div class="on" style="max-width:none">
+      <div class="kicker">Problem</div>
+      <h2>Operators do not run 25 notebooks.</h2>
+      <div class="grid">
+        <div class="card">LSTM vs GRU vs VAE vs SVDD vs forest vs TCN vs Informer — each with its own CSV, threshold, and false-alarm personality.</div>
+        <div class="card">Classifiers, RUL heads, TinyML trip, SHAP, GNN fleet — none of them speak OPC or a historian drop folder.</div>
+        <div class="card">A plant needs <b>WTPM.ALARM</b>, <b>WTPM.SCORE</b>, <b>WTPM.RUL_H</b> on the point list. One tag. One shift handover.</div>
+        <div class="card">Overspeed still has to die on the rail. AI cannot write a negative pitch.</div>
+      </div>
+    </div>
+    <footer class="bar"><span>WT-PM</span><span>2 / 6</span></footer>
+  </section>
+
+  <section class="slide">
+    <img class="full" src="models-mosaic.png" alt="" />
+    <div class="veil"></div>
+    <div class="on">
+      <div class="kicker">Product</div>
+      <h1>The mosaic collapses.</h1>
+      <p>Anomaly · classify · RUL · physics · edge. Router + fusion + Hermes + SIL gate. One CLI: <code>wt-pm scada</code>.</p>
+    </div>
+    <footer class="bar"><span>WT-PM</span><span>3 / 6</span></footer>
+  </section>
+
+  <section class="slide">
+    <div class="on" style="max-width:none">
+      <div class="kicker">How it ships</div>
+      <h2>Zero extra plant hardware to start.</h2>
+      <ul>
+        <li>Historian CSV drop folder → fused tags out</li>
+        <li>JSON/TCP mock bus until OPC-UA / Modbus / MQTT go live</li>
+        <li>Hill-of-Towie-shaped field map while the plant header is pending</li>
+        <li>Software SIL: rpm &gt; 25 or pitch &lt; 0 is dropped</li>
+        <li>PyPI via GitHub OIDC — no token in git</li>
+      </ul>
+    </div>
+    <footer class="bar"><span>WT-PM</span><span>4 / 6</span></footer>
+  </section>
+
+  <section class="slide">
+    <img class="full" src="operator-tablet.png" alt="" />
+    <div class="veil"></div>
+    <div class="on">
+      <div class="kicker">Field</div>
+      <h1>One app on the pad.</h1>
+      <p>Health, remaining hours, one risk number. TinyML still trips in the nacelle.</p>
+    </div>
+    <footer class="bar"><span>WT-PM</span><span>5 / 6</span></footer>
+  </section>
+
+  <section class="slide">
+    <div class="on">
+      <div class="kicker">Ask</div>
+      <h1>Turn on Pages. Drop the CSV.</h1>
+      <p>Enable GitHub Pages on this repo (Actions source). Paste the first historian header row. We lock the tag map and the product is plant-shaped.</p>
+      <p><a href="index.html">Launch site</a> · <a href="vo-launch.mp3">15s voiceover</a></p>
+    </div>
+    <footer class="bar"><span>WT-PM</span><span>6 / 6 · Print to PDF (landscape)</span></footer>
+  </section>
+</body>
+</html>
