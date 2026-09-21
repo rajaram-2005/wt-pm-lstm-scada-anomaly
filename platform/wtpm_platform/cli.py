@@ -174,7 +174,64 @@ SIBLING_REPOS = (
 )
 
 
+_PARTICLE_FILTER_STUB = '''\
+"""Stub for wt-pm-particle-filter-rul — replace with the real research module.
+
+Minimal pure-numpy particle filter over RUL, implementing the interface the
+platform adapter (wtpm_platform/adapters/prognostics.py, m16) calls:
+
+    pf = ParticleFilterRUL(num_particles=..., init_rul=...)
+    pf.predict(degradation_rate=..., noise=...)   # time update
+    pf.update(observed_rul=..., obs_noise=...)    # measurement update
+    pf.estimate()                                 # weighted-mean RUL
+"""
+import numpy as np
+
+
+class ParticleFilterRUL:
+    def __init__(self, num_particles=800, init_rul=400.0, rng_seed=0):
+        self.num_particles = int(num_particles)
+        self.particles = np.full(self.num_particles, float(init_rul))
+        self.weights = np.full(self.num_particles, 1.0 / self.num_particles)
+        self._rng = np.random.default_rng(rng_seed)
+
+    def predict(self, degradation_rate=1.0, noise=0.5):
+        self.particles = (self.particles - degradation_rate
+                          + self._rng.normal(0.0, noise, size=self.num_particles))
+        self.particles = np.maximum(self.particles, 0.0)
+        self.weights = np.full(self.num_particles, 1.0 / self.num_particles)
+
+    def update(self, observed_rul, obs_noise=25.0):
+        w = np.exp(-0.5 * ((self.particles - float(observed_rul))
+                           / float(obs_noise)) ** 2)
+        s = float(w.sum())
+        self.weights = (w / s if s > 0
+                        else np.full(self.num_particles, 1.0 / self.num_particles))
+        self._resample()
+
+    def _resample(self):
+        self.particles = self._rng.choice(
+            self.particles, size=self.num_particles, replace=True, p=self.weights)
+        self.weights = np.full(self.num_particles, 1.0 / self.num_particles)
+
+    def estimate(self) -> float:
+        return float(np.sum(self.particles * self.weights))
+'''
+
+#: repo name -> functional stub model.py source; everything else gets the
+#: generic placeholder below.
+_STUB_MODELS = {"wt-pm-particle-filter-rul": _PARTICLE_FILTER_STUB}
+
+
 def _stub_sibling(path: str, name: str) -> None:
+    """Write the local scaffold for one sibling repo (README + model.py).
+
+    The particle-filter repo gets a *functional* pure-numpy stub: m16 is the
+    only sibling whose adapter runs on numpy alone, so its stub must actually
+    filter for the platform test suite to pass in lean environments (CI).
+    The other 23 adapters are gated on torch/tensorflow/xgboost/... and stay
+    honestly unavailable there, so a placeholder suffices.
+    """
     os.makedirs(path, exist_ok=True)
     readme = os.path.join(path, "README.md")
     model = os.path.join(path, "model.py")
@@ -182,13 +239,14 @@ def _stub_sibling(path: str, name: str) -> None:
         with open(readme, "w", encoding="utf-8") as f:
             f.write(f"# {name}\n\nLocal scaffold (GitHub write not available from this session).\n")
     if not os.path.exists(model):
+        src = _STUB_MODELS.get(name) or (
+            f'"""Stub for {name} — replace with the real research module."""\n'
+            "class Model:\n"
+            "    def available(self) -> bool:\n"
+            "        return False\n"
+        )
         with open(model, "w", encoding="utf-8") as f:
-            f.write(
-                f'"""Stub for {name} — replace with the real research module."""\n'
-                "class Model:\n"
-                "    def available(self) -> bool:\n"
-                "        return False\n"
-            )
+            f.write(src)
 
 
 def cmd_fetch_models(args) -> int:
