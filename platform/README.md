@@ -2,8 +2,10 @@
 
 Unified wind-turbine predictive-maintenance platform: **25 models, one orchestrator, one terminal command.**
 
+GitHub architecture for the whole collection: [ARCHITECTURE.md](../ARCHITECTURE.md)
+
 ```bash
-pip install wt-pm
+pip install -e platform          # from this monorepo
 wt-pm inspect
 wt-pm serve --port 8100
 ```

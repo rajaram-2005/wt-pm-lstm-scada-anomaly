@@ -1,8 +1,12 @@
 # WT-PM Unified Platform — Architecture Report
 
+**GitHub map (this repo vs 24 siblings, mermaid, commands):**
+[ARCHITECTURE.md](../../ARCHITECTURE.md)
+
 **Deliverable:** 25 specialized models + 1 common data layer + 1 orchestrator +
 1 fusion engine + 1 diagnosis engine + 1 RUL engine + 1 XAI layer +
-1 digital-twin layer + 1 edge/safety layer + 1 monitoring/evaluation layer.
+1 digital-twin layer + 1 edge/safety layer + 1 Hermes agent +
+1 monitoring/evaluation layer.
 
 The integration layer lives in `platform/wtpm_platform/` inside the
 `wt-pm-lstm-scada-anomaly` repository (the reference repo of the collection).

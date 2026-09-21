@@ -4,6 +4,11 @@
 **Position in the fabric:** Layer 4 (anomaly intelligence) with interfaces up to
 Layers 6, 12 and 13.
 
+The **unified 25-model platform** (Hermes agent, fusion, adapters) lives in
+`platform/` and is documented in [ARCHITECTURE.md](../ARCHITECTURE.md) and
+[platform/docs/ARCHITECTURE_REPORT.md](../platform/docs/ARCHITECTURE_REPORT.md).
+This file stays the architecture of **model 13 only**.
+
 This document describes what is actually implemented, why each piece exists, and
 where the boundary of the claim is. Numbers quoted here come from the reference
 run (`wtpm demo`, 60 days, 30 epochs, two ensemble members, stride 2) and are
