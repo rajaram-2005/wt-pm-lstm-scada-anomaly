@@ -96,6 +96,12 @@ class Handler(BaseHTTPRequestHandler):
             if orch is None:
                 return self._send(503, {"error": "starting"})
             self._send(200, orch.alerts.snapshot())
+        elif path == "/scada/tags":
+            last = _STATE.get("last")
+            if not last:
+                return self._send(200, {"info": "POST /scada or /analyse first"})
+            from wtpm_platform.scada import emit_scada_tags
+            self._send(200, emit_scada_tags(last, last.get("turbine_id", "WT")))
         elif path == "/":
             self._send(200, DASHBOARD.encode(), "text/html")
         else:
@@ -147,6 +153,26 @@ class Handler(BaseHTTPRequestHandler):
                 ok = orch.alerts.ack(str(payload.get("alert_id", "")))
                 orch.audit.record("ack", {"alert_id": payload.get("alert_id"), "ok": ok})
                 return self._send(200, {"ok": ok})
+
+            if path == "/scada":
+                from wtpm_platform.contracts import OperatingContext
+                from wtpm_platform.scada import emit_scada_tags, ingest_scada_rows
+                rows = payload.get("rows") or payload.get("samples")
+                if not rows:
+                    return self._send(400, {"error": "JSON body needs 'rows': [{plant tags...}]"})
+                live = ingest_scada_rows(
+                    rows,
+                    turbine_id=str(payload.get("turbine_id", "WT-SCADA")),
+                    tag_map=payload.get("map") or {},
+                )
+                live = orch.prepare(live)
+                result = orch.analyse(live, OperatingContext(mode="production", has_labels=False,
+                                                             has_vibration_waveform=True))
+                _STATE["last"] = result
+                tags = emit_scada_tags(result, live.turbine_id)
+                orch.audit.record("scada", {"turbine_id": live.turbine_id,
+                                            "n": live.n_steps})
+                return self._send(200, {"analyse": result, "writeback": tags})
 
             if path == "/feedback":
                 row = {"fault": payload.get("fault"),

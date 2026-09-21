@@ -288,6 +288,66 @@ def cmd_agent(args) -> int:
     return 0
 
 
+def cmd_scada(args) -> int:
+    """Combine a plant SCADA export with the 25-model platform."""
+    from wtpm_platform.contracts import OperatingContext
+    from wtpm_platform.orchestrator import Orchestrator
+    from wtpm_platform.scada import (
+        default_map_document, emit_scada_tags, ingest_scada_csv,
+        load_tag_map, write_tags_csv,
+    )
+
+    if args.write_map:
+        path = args.write_map
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(default_map_document(), f, indent=2)
+        print(f"[scada] example tag map -> {path}")
+        return 0
+
+    tag_map = load_tag_map(args.map) if args.map else {}
+    if args.demo and not args.inp:
+        from wtpm_platform.data import canonical_channels
+        batch = _make_batch(args.days, seed=args.seed, turbine_id=args.turbine)
+        demo = args.out.replace(".json", "_in.csv") if args.out.endswith(".json") else "scada_demo_in.csv"
+        chans = list(canonical_channels())
+        import csv as _csv
+        with open(demo, "w", newline="", encoding="utf-8") as f:
+            w = _csv.writer(f)
+            w.writerow(["timestamp", "turbine_id"] + chans)
+            for i in range(batch.n_steps):
+                w.writerow([int(batch.timestamps[i]), batch.turbine_id]
+                           + [f"{batch.values[i, j]:.6f}" for j in range(len(chans))])
+        args.inp = demo
+        print(f"[scada] demo historian CSV -> {demo}")
+
+    if not args.inp:
+        print("[scada] need --in historian.csv  (or --demo / --write-map)", file=sys.stderr)
+        return 2
+
+    print(f"[scada] ingest {args.inp} ...")
+    live = ingest_scada_csv(args.inp, turbine_id=args.turbine, tag_map=tag_map)
+    print(f"[scada] mapped {live.meta.get('scada_mapped_channels')}  "
+          f"unmapped={live.meta.get('scada_unmapped_headers')}")
+
+    orch = Orchestrator(max_workers=args.workers)
+    ctx_fit = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
+    ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
+    live = orch.prepare(live)
+    print("[scada] fitting on the leading band of this export ...")
+    orch.fit(live, ctx_fit, verbose=False)
+    result = orch.analyse(live, ctx)
+    tags = emit_scada_tags(result, live.turbine_id)
+    out = args.out or "scada_writeback.json"
+    with open(out, "w", encoding="utf-8") as f:
+        json.dump(tags, f, indent=2, default=str)
+    csv_path = os.path.splitext(out)[0] + "_points.csv"
+    write_tags_csv(tags, csv_path)
+    print(json.dumps(tags["tags"], indent=2, default=str))
+    print(f"[scada] writeback JSON -> {out}")
+    print(f"[scada] SCADA point list CSV -> {csv_path}")
+    return 0
+
+
 def main(argv=None) -> int:
     p = argparse.ArgumentParser(
         prog="wt-pm",
@@ -326,6 +386,16 @@ def main(argv=None) -> int:
     common(sp)
     sp.add_argument("--quiet", action="store_true")
     sp.set_defaults(fn=cmd_agent)
+    sp = sub.add_parser("scada", help="ingest plant SCADA CSV and write WTPM.* tags back")
+    common(sp)
+    sp.add_argument("--in", dest="inp", default="", help="historian CSV export")
+    sp.add_argument("--turbine", default="WT-SCADA")
+    sp.add_argument("--map", default="", help="JSON plant_tag → canonical channel")
+    sp.add_argument("--out", default="scada_writeback.json")
+    sp.add_argument("--demo", action="store_true", help="write a demo CSV then score it")
+    sp.add_argument("--write-map", default="", help="write example tag_map.json and exit")
+    sp.add_argument("--no-fit", dest="fit", action="store_false")
+    sp.set_defaults(fn=cmd_scada, fit=True)
 
     args = p.parse_args(argv)
     return args.fn(args)

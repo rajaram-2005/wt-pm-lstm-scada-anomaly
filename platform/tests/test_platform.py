@@ -27,6 +27,34 @@ CHANNELS = (
 )
 
 
+def test_scada_column_map_and_writeback():
+    from wtpm_platform.scada import (
+        emit_scada_tags, ingest_scada_rows, resolve_column, write_tags_csv,
+    )
+    assert resolve_column("WindSpeed") == "wind_speed_ms"
+    assert resolve_column("WT07.BrgVib") == "bearing_vib_rms_mm_s"
+    assert resolve_column("DateTime") == "__time__"
+    rows = [
+        {"timestamp": 1700000000 + i * 600, "wind_speed": 8 + 0.01 * i,
+         "power": 1200, "rpm": 12, "oil_temp": 55, "vibration": 2.0 + 0.01 * i}
+        for i in range(40)
+    ]
+    b = ingest_scada_rows(rows, turbine_id="WT-07")
+    assert "wind_speed_ms" in b.channel_names
+    assert np.isfinite(b.channel("wind_speed_ms")).all()
+    # torque filled from P/ω
+    assert np.isfinite(b.channel("main_shaft_torque_knm")).sum() > 0
+    tags = emit_scada_tags({
+        "timestamp": 1, "risk_score": 12, "what": {"fault": "healthy", "alarm": False,
+                                                   "current_fused_score": 0.4, "fault_confidence": 0.9},
+        "where": {"subsystem": "unknown"}, "rul": {"hours": 200},
+        "action": {"action": "continue_monitoring"}, "safety": {"decision": "CONTINUE"},
+        "health_index": {"now": 91}, "sensor_quality": {"trust": 0.95},
+    }, "WT-07")
+    assert tags["tags"]["WTPM.FAULT"] == "healthy"
+    assert any(p["tag"] == "WTPM.RUL_H" for p in tags["point_list"])
+
+
 def test_hermes_trace_has_thought_action_observation():
     from wtpm_platform.hermes import HermesAgent, contrastive_channels
     b = FeaturePipeline(window=24, stride=4).transform(synth_batch(200))

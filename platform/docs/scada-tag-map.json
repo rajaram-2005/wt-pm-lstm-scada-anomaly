@@ -1,0 +1,16 @@
+{
+  "WT07.WindSpeed": "wind_speed_ms",
+  "WT07.AmbTemp": "ambient_temp_c",
+  "WT07.RotorRPM": "rotor_speed_rpm",
+  "WT07.Pitch": "pitch_angle_deg",
+  "WT07.YawErr": "yaw_error_deg",
+  "WT07.Pwr_kW": "power_kw",
+  "WT07.Torque": "main_shaft_torque_knm",
+  "WT07.GenI": "generator_current_a",
+  "WT07.GridHz": "grid_frequency_hz",
+  "WT07.NacTemp": "nacelle_temp_c",
+  "WT07.GbOilTemp": "gearbox_oil_temp_c",
+  "WT07.BrgVib": "bearing_vib_rms_mm_s",
+  "DateTime": "__time__",
+  "Turbine": "__turbine__"
+}

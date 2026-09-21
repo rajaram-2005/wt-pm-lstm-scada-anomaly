@@ -108,6 +108,8 @@ wt-pm production --days 10 --out production_result.json
 wt-pm fleet --turbines 6
 wt-pm edge --out edge_artifacts
 wt-pm agent --days 8 --quiet       # Hermes trace
+wt-pm scada --demo                 # plant SCADA CSV → WTPM.* writeback tags
+# historian:  wt-pm scada --in drop\WT07.csv --map tag_map.json --out writeback.json
 wt-pm serve --port 8100            # command center
 pytest platform/tests -q
 ```
