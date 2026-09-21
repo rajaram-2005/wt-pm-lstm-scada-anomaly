@@ -16,5 +16,9 @@ jobs:
           pip install -e platform
       - name: model-13 tests
         run: python -m pytest tests -q
+      # m16 (particle-filter RUL) wraps the sibling repo's code from external/;
+      # scaffold functional stubs so the platform tests pass without clones.
+      - name: scaffold sibling stubs (external/)
+        run: python -m wtpm_platform.cli fetch-models --stub --dir external
       - name: platform tests
         run: python -m pytest platform/tests --tb=short
