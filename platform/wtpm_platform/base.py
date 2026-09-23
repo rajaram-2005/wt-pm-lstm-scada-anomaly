@@ -42,16 +42,22 @@ def load_repo_module(repo: str, module_name: Optional[str] = None):
     This is how adapters call the original research code without modifying it
     and without the 24 identical ``model.py`` filenames colliding.
     """
-    path = os.path.join(EXTERNAL_DIR, repo, "model.py")
+    # Resolve at call time so installed wheels and configured deployments agree.
+    root = os.environ.get("WTPM_EXTERNAL_DIR", EXTERNAL_DIR)
+    path = os.path.join(root, repo, "model.py")
     if not os.path.exists(path):
         raise FileNotFoundError(f"{repo}: model.py not found at {path} (clone the repo into external/)")
     name = module_name or ("wtpm_ext_" + repo.replace("-", "_"))
-    if name in sys.modules:
+    if name in sys.modules and getattr(sys.modules[name], "__file__", None) == path:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    try:
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
     return mod
 
 
@@ -80,6 +86,8 @@ class BaseWTModel(ABC):
     def __init__(self) -> None:
         self._fitted = False
         self._unavailable_reason = ""
+        self._fit_error = ""
+        self._fit_status = "not fitted"
 
     # -- capability ---------------------------------------------------------
     def available(self) -> bool:
@@ -134,7 +142,10 @@ class BaseWTModel(ABC):
             "repository": self.spec.repository,
             "available": self.available(),
             "fitted": self._fitted,
-            "reason": self._unavailable_reason,
+            "reason": self._unavailable_reason or self._fit_error,
+            "fit_status": self._fit_status,
+            "fit_error": self._fit_error,
+            "notes": self.spec.notes,
         }
 
 

@@ -8,7 +8,9 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
+import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict
 from urllib.parse import urlparse
@@ -17,7 +19,7 @@ import numpy as np
 
 _STATE: Dict[str, Any] = {"orchestrator": None, "batch": None, "last": None,
                           "fitted": False, "lock": threading.Lock(),
-                          "feedback": []}
+                          "feedback": [], "error": None}
 
 
 def _json_default(o):
@@ -28,16 +30,66 @@ def _json_default(o):
     return str(o)
 
 
+def _require_full_result(orch, result) -> None:
+    health = result["model_health"]
+    expected = set(orch.registry.ids())
+    missing = expected - set(health["ran"])
+    if len(expected) != 25 or set(health["ran"]) != expected or health["errors"] or health["fallbacks"]:
+        raise RuntimeError(
+            f"Full profile verification failed: missing={sorted(missing)}, "
+            f"errors={health['errors']}, fallbacks={health['fallbacks']}")
+
+
 def _bootstrap(days: float, seed: int) -> None:
     from wtpm_platform.cli import _make_batch
     from wtpm_platform.contracts import OperatingContext
     from wtpm_platform.orchestrator import Orchestrator
 
-    orch = Orchestrator()
-    batch = orch.prepare(_make_batch(days, seed=seed))
-    ctx = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
-    orch.fit(batch, ctx, verbose=True)
-    _STATE.update(orchestrator=orch, batch=batch, ctx=ctx, fitted=True)
+    _STATE.update(fitted=False, error=None, last=None)
+    try:
+        workers = max(1, int(os.environ.get("WTPM_WORKERS", "4")))
+        orch = Orchestrator(max_workers=workers)
+        _STATE["orchestrator"] = orch  # Show per-model progress while fitting.
+        batch = orch.prepare(_make_batch(days, seed=seed))
+        ctx = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
+        _STATE.update(batch=batch, ctx=ctx)
+        status = orch.fit(batch, ctx, verbose=True)
+        _STATE["fit_status"] = status
+        if not any(m["fitted"] for m in orch.registry.health_report()):
+            raise RuntimeError("No models fitted successfully; inspect per-model reasons")
+        if os.environ.get("WTPM_REQUIRE_ALL_MODELS") == "1":
+            failed = [m for m in orch.registry.health_report() if not m["fitted"]]
+            if failed:
+                raise RuntimeError(f"Full profile requires all models fitted: {failed}")
+            # Readiness is earned by actual end-to-end execution, not imports.
+            result = orch.analyse(batch, ctx, parallel=False)
+            _require_full_result(orch, result)
+            _STATE["last"] = result
+        _STATE["fitted"] = True
+        print("[serve] models ready", flush=True)
+    except Exception as exc:
+        _STATE.update(fitted=False, error=f"{type(exc).__name__}: {exc}")
+        traceback.print_exc()
+
+
+def _health_snapshot():
+    orch = _STATE.get("orchestrator")
+    models = [] if orch is None else orch.registry.health_report()
+    last = (_STATE.get("last") or {}).get("model_health", {})
+    return {
+        "status": "error" if _STATE.get("error") else
+                  ("ok" if _STATE.get("fitted") else "starting"),
+        "error": _STATE.get("error"),
+        "profile": "full" if os.environ.get("WTPM_REQUIRE_ALL_MODELS") == "1" else "demo",
+        "models": models,
+        "counts": {"registered": len(models),
+                   "available": sum(m["available"] for m in models),
+                   "fitted": sum(m["fitted"] for m in models),
+                   "ran": len(last.get("ran", []))},
+        "last_execution": {"ran": last.get("ran", []),
+                           "errors": last.get("errors", {}),
+                           "fallbacks": last.get("fallbacks", {})},
+    }
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -66,16 +118,13 @@ class Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         orch = _STATE["orchestrator"]
         if path == "/health":
-            self._send(200, {
-                "status": "ok" if _STATE["fitted"] else "starting",
-                "models": None if orch is None else orch.registry.health_report(),
-            })
+            self._send(200, _health_snapshot())
         elif path == "/ready":
             # Liveness (/health) remains available during background fitting.
             # Hosts must not route traffic until the models are ready.
             ready = bool(_STATE["fitted"])
             self._send(200 if ready else 503, {
-                "status": "ready" if ready else "starting",
+                "status": "ready" if ready else ("error" if _STATE.get("error") else "starting"),
             })
         elif path == "/registry":
             if orch is None:
@@ -123,7 +172,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self):
         path = urlparse(self.path).path
         if not _STATE["fitted"]:
-            return self._send(503, {"error": "models still fitting, retry shortly"})
+            return self._send(503, {"error": _STATE.get("error") or "models still fitting, retry shortly"})
         try:
             payload = self._read_json()
         except json.JSONDecodeError:
@@ -301,20 +350,48 @@ function spark(canvas, series, color){
     i?ctx.lineTo(x,y):ctx.moveTo(x,y);}); ctx.stroke();
 }
 function pill(ok,t){return `<span class="pill ${ok}">${t}</span>`}
+function renderModels(models, ran=[], errors={}){
+  const completed=new Set(ran);
+  $('models').replaceChildren();
+  for(const m of models){
+    const reason=errors[m.model_id]||m.reason||'';
+    const state=reason?'failed':completed.has(m.model_id)?'ran':m.fitted?'fitted':m.fit_status||'not fitted';
+    const item=document.createElement('i');
+    item.className=reason?'bad':completed.has(m.model_id)?'ok':'warn';
+    item.textContent=`${m.model_id} · ${state}`;
+    item.title=[reason,m.notes].filter(Boolean).join('\n');
+    $('models').appendChild(item);
+  }
+}
 async function health(){
-  const r=await fetch('/health'); const d=await r.json();
-  const mods=d.models||[];
-  $('models').innerHTML=mods.map(m=>`<i class="${m.fitted?'ok':'bad'}">${m.model_id}${m.fitted?' ✓':''}</i>`).join('');
-  $('status').textContent=d.status==='ok'?' models ready':' fitting models…';
+  try {
+    const r=await fetch('/health'); const d=await r.json();
+    renderModels(d.models||[], (d.last_execution||{}).ran, (d.last_execution||{}).errors);
+    const c=d.counts||{};
+    $('status').textContent=d.status==='error'?` startup failed: ${d.error}`:
+      ` ${d.profile} · ${c.fitted||0}/${c.registered||25} fitted · ${c.ran||0} ran`+
+      (d.status==='starting'?' · fitting…':' · ready');
+    $('go').disabled=d.status!=='ok';
+    if(d.status==='starting') setTimeout(health,3000);
+  } catch(e) {
+    $('status').textContent=` Cannot read model health: ${e.message}`;
+    $('go').disabled=true;
+    setTimeout(health,5000);
+  }
 }
 async function run(){
-  $('go').disabled=true; $('status').textContent=' running 25-model pipeline…';
-  const r=await fetch('/analyse',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({fusion_method:$('fusion').value})});
-  const d=await r.json(); render(d); $('go').disabled=false;
+  $('go').disabled=true; $('status').textContent=' running available models…';
+  try {
+    const r=await fetch('/analyse',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({fusion_method:$('fusion').value})});
+    const d=await r.json();
+    if(!r.ok) throw new Error(d.error||`HTTP ${r.status}`);
+    render(d);
+  } catch(e) { $('status').textContent=` Analysis failed: ${e.message}`; }
+  finally { $('go').disabled=false; }
 }
 function render(d){
-  $('status').textContent=` done in ${d.pipeline_ms} ms · ${ (d.model_health.ran||[]).length }/25 models`;
+  $('status').textContent=` done in ${d.pipeline_ms} ms · ${ (d.model_health.ran||[]).length }/${(d.model_health.connected||[]).length} models ran`;
   $('k_fault').textContent=d.what.fault;
   $('k_sub').textContent=d.where.subsystem;
   $('k_risk').textContent=d.risk_score;
@@ -353,9 +430,7 @@ function render(d){
   const ht=(d.hermes&&d.hermes.trace)||[];
   $('hermes').textContent=ht.map((s,i)=>`Thought ${i+1}: ${s.thought}\nAction  ${i+1}: ${s.action}\nObserve ${i+1}: ${JSON.stringify(s.observation).slice(0,280)}`).join('\n\n')
     + '\n\nFINAL '+JSON.stringify((d.hermes&&d.hermes.final)||{},null,1);
-  const ran=new Set(d.model_health.ran||[]);
-  $('models').innerHTML=(d.model_health.connected||[]).map(id=>
-    `<i class="${ran.has(id)?'ok':'warn'}">${id}${ran.has(id)?' ✓':' · idle'}</i>`).join('');
+  renderModels(d.model_health.details||[], d.model_health.ran, d.model_health.errors);
   loadAudit();
 }
 async function whatif(){

@@ -309,12 +309,23 @@ class XAIShapInterpretable(BaseWTModel):
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         self._fitted = True  # stateless wrapper
 
+    def bind_estimator(self, estimator, source_model) -> None:
+        self._estimator = estimator
+        self._source_model = source_model
+
     def _predict(self, batch: SensorBatch) -> ModelOutput:
+        estimator = getattr(self, "_estimator", None)
+        if estimator is None:
+            raise RuntimeError("SHAP requires a fitted upstream tree classifier")
+        values = self.explain(estimator, batch.features, list(batch.feature_names),
+                              row=batch.n_steps - 1)
+        if not values or not all(np.isfinite(v) for v in values.values()):
+            raise RuntimeError("SHAP did not produce finite attributions")
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
-            turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            explanation="SHAP wrapper connected; attributions produced by XAIEngine",
-            extra={"status": "connected", "invoke": "XAIEngine.explain"},
+            turbine_id=batch.turbine_id, timestamps=batch.timestamps[-1:],
+            explanation=f"SHAP TreeExplainer attributions for {self._source_model}",
+            extra={"shap_values": values, "source_model": self._source_model},
         )
 
     def explain(self, estimator, X: np.ndarray, feature_names: List[str],
@@ -344,8 +355,8 @@ class QuantizedMobileNetEdge(BaseWTModel):
         model_id="m24-quantized-edge",
         repository="wt-pm-quantized-mobilenet-edge",
         task=TaskType.EDGE_INFERENCE,
-        input_requirements=["a Keras model to quantize"],
-        output_schema=["extra['tflite_path', 'size_bytes']"],
+        input_requirements=["features", "fault labels (research fit only)"],
+        output_schema=["prediction", "probability", "extra['size_bytes']"],
         resource_requirements=["tensorflow"],
         typical_latency_ms=20000,
         deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
@@ -357,27 +368,73 @@ class QuantizedMobileNetEdge(BaseWTModel):
         import tensorflow  # noqa: F401
 
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
+        """Train a small SCADA demo classifier, then run its actual INT8 export.
+
+        The sibling repo supplies a conversion recipe, not trained MobileNet
+        weights. This is explicitly a tabular edge surrogate, not image inference.
+        """
+        import tensorflow as tf
+        labels = batch.meta.get("fault_label")
+        if labels is None:
+            raise RuntimeError("edge demo classifier needs research fault labels")
+        self._std = _standardiser(batch.features[train_mask])
+        feats = self._std(batch.features).astype(np.float32)
+        net = tf.keras.Sequential([
+            tf.keras.layers.Input(shape=(feats.shape[1],)),
+            tf.keras.layers.Dense(16, activation="relu"),
+            tf.keras.layers.Dense(1, activation="sigmoid"),
+        ])
+        net.compile(optimizer="adam", loss="binary_crossentropy")
+        net.fit(feats, np.asarray(labels, dtype=np.float32),
+                epochs=3, batch_size=64, verbose=0)
+        self._tflite = self._convert(net, feats)
+        self._interpreter = tf.lite.Interpreter(model_content=self._tflite, num_threads=1)
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
+        feats = self._std(batch.features).astype(np.float32)
+        interpreter = self._interpreter
+        inp = interpreter.get_input_details()[0]
+        interpreter.resize_tensor_input(inp["index"], feats.shape, strict=True)
+        interpreter.allocate_tensors()
+        inp, out = interpreter.get_input_details()[0], interpreter.get_output_details()[0]
+        scale, zero = inp["quantization"]
+        if inp["dtype"] != np.int8 or out["dtype"] != np.int8 or scale <= 0:
+            raise RuntimeError("edge model must have calibrated INT8 input/output")
+        quantized = np.clip(np.rint(feats / scale + zero), -128, 127).astype(np.int8)
+        interpreter.set_tensor(inp["index"], quantized)
+        interpreter.invoke()
+        raw = interpreter.get_tensor(out["index"]).astype(np.float32)
+        out_scale, out_zero = out["quantization"]
+        probability = np.clip((raw.ravel() - out_zero) * out_scale, 0, 1)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            explanation="INT8 TFLite conversion recipe connected; "
-                        "artifacts via EdgeInferenceManager.export_edge_bundle",
-            extra={"status": "connected", "invoke": "quantize"},
+            prediction=np.where(probability >= 0.5, "fault", "healthy"),
+            probability={"fault": probability, "healthy": 1 - probability},
+            explanation="Actual INT8 TFLite inference on a small SCADA demo net; "
+                        "not image-based MobileNet and not field validated",
+            extra={"size_bytes": len(self._tflite), "input_dtype": "int8",
+                   "output_dtype": "int8"},
         )
 
-    def quantize(self, keras_model, sample_input: np.ndarray, out_path: str) -> Dict[str, object]:
-        """INT8 conversion using the repo's converter settings."""
+    @staticmethod
+    def _convert(keras_model, sample_input: np.ndarray) -> bytes:
         import tensorflow as tf
         converter = tf.lite.TFLiteConverter.from_keras_model(keras_model)
-        converter.optimizations = [tf.lite.Optimize.DEFAULT]   # repo's setting
+        converter.optimizations = [tf.lite.Optimize.DEFAULT]
         def rep():
-            for i in range(min(100, len(sample_input))):
+            for i in np.linspace(0, len(sample_input) - 1, min(100, len(sample_input)), dtype=int):
                 yield [sample_input[i:i + 1].astype(np.float32)]
         converter.representative_dataset = rep
-        tflite = converter.convert()
+        converter.target_spec.supported_ops = [tf.lite.OpsSet.TFLITE_BUILTINS_INT8]
+        converter.inference_input_type = tf.int8
+        converter.inference_output_type = tf.int8
+        return converter.convert()
+
+    def quantize(self, keras_model, sample_input: np.ndarray, out_path: str) -> Dict[str, object]:
+        """Export using the sibling recipe's full INT8 settings, not float I/O."""
+        tflite = self._convert(keras_model, sample_input)
         os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
         with open(out_path, "wb") as f:
             f.write(tflite)

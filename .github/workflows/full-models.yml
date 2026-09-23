@@ -1,0 +1,21 @@
+name: full-models
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Dockerfile.full'
+      - 'deployment/**'
+      - 'platform/wtpm_platform/**'
+      - '.github/workflows/full-models.yml'
+permissions:
+  contents: read
+jobs:
+  cpu-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build full CPU image with pinned original model sources
+        run: docker build -f Dockerfile.full -t wtpm-full .
+      - name: Verify all 25 models execute without fallbacks
+        run: docker run --rm --memory=3g --cpus=2 --entrypoint python wtpm-full deployment/check_full.py

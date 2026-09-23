@@ -88,6 +88,11 @@ Deploy the Docker-based command center on Render using the included
 `render.yaml`. You must sign in to Render and approve the deployment.
 [Deployment guide and verification steps](docs/deploy-render.md).
 
+**Need every adapter?** Use the opt-in [full CPU deployment profile](docs/deploy-render.md#enable-all-25-adapters-on-the-existing-render-service)
+(`Dockerfile.full`), including the original sibling sources and all required
+frameworks. Budget at least 4 GB RAM and approve hosting costs before switching.
+The free/demo profile intentionally does not run all 25.
+
 **Public research demo only:** simulated data, no authentication, no persistent
 state, and no plant connections. Optional model frameworks and sibling
 repositories are not bundled. Do not upload sensitive SCADA data.
