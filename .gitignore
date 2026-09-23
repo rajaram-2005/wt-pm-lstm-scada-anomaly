@@ -37,3 +37,6 @@ scada_done/
 scada_writeback.json
 scada_demo_in.csv
 hot_sample.csv
+
+# Exported local Docker image (large; transfer outside Git)
+wt-pm-full.tar

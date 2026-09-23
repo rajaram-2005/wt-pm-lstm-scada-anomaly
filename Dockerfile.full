@@ -1,0 +1,32 @@
+# Full research profile; NOT suitable for a 512 MiB free instance.
+FROM python:3.11-slim AS sources
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /sources
+COPY deployment/models.lock.json deployment/fetch_models.py ./
+RUN python fetch_models.py --dest /external \
+    && find /external -name .git -type d -prune -exec rm -rf {} +
+
+FROM python:3.11-slim
+WORKDIR /app
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PORT=8100 \
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    TF_NUM_INTRAOP_THREADS=1 TF_NUM_INTEROP_THREADS=1 TF_CPP_MIN_LOG_LEVEL=2 \
+    WTPM_EXTERNAL_DIR=/app/external WTPM_WORKERS=1 WTPM_REQUIRE_ALL_MODELS=1
+RUN apt-get update && apt-get install -y --no-install-recommends libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+COPY deployment/requirements-full.txt /tmp/requirements-full.txt
+RUN pip install --no-cache-dir 'torch==2.8.0+cpu' --index-url https://download.pytorch.org/whl/cpu \
+    && pip install --no-cache-dir -r /tmp/requirements-full.txt
+COPY pyproject.toml README.md ARCHITECTURE.md ./
+COPY src ./src
+COPY platform ./platform
+COPY deployment ./deployment
+COPY --from=sources /external ./external
+RUN pip install --no-cache-dir . ./platform && pip check \
+    && useradd --create-home --uid 10001 wtpm && chown wtpm:wtpm /app
+USER wtpm
+# Fail the build on missing imports or missing original repositories.
+RUN python deployment/check_full.py --imports-only
+EXPOSE 8100
+CMD ["wt-pm", "serve", "--days", "6"]

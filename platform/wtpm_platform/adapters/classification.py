@@ -26,6 +26,7 @@ from wtpm_platform.contracts import (
 )
 from wtpm_platform.data import ELECTRICAL_CHANNELS, labels_from_batch, fault_kinds_from_batch
 from wtpm_platform.adapters.anomaly import _standardiser, robust_calibrate
+from wtpm_platform.protocol import training_mask, hold_probabilities
 
 
 def _step_labels(batch: SensorBatch) -> Optional[np.ndarray]:
@@ -34,7 +35,10 @@ def _step_labels(batch: SensorBatch) -> Optional[np.ndarray]:
     if kinds is None:
         return None
     lut = {k: i for i, k in enumerate(FAULT_CLASSES)}
-    return np.array([lut.get(k if k else "healthy", 0) for k in kinds])
+    unknown = set(kinds) - set(lut) - {""}
+    if unknown:
+        raise ValueError(f"unknown fault labels: {unknown}")
+    return np.array([lut[k or "healthy"] for k in kinds])
 
 
 def _proba_dict(proba: np.ndarray, classes: List[str], class_ids: np.ndarray) -> Dict[str, np.ndarray]:
@@ -70,7 +74,10 @@ class XGBoostTabularFaults(BaseWTModel):
         if y is None:
             raise RuntimeError("m11 needs labels; fit in research mode first")
         # same estimator family/params as the repo's train_xgboost()
-        X = batch.features
+        mask = training_mask(batch, train_mask)
+        X, y = batch.features[mask], y[mask]
+        if len(np.unique(y)) < 2:
+            raise ValueError("XGBoost needs at least two labelled training classes")
         present = np.unique(y)
         self._class_ids = present
         remap = {c: i for i, c in enumerate(present)}
@@ -119,11 +126,13 @@ class RandomForestTelemetry(BaseWTModel):
         y = _step_labels(batch)
         if y is None:
             raise RuntimeError("m10 needs labels; fit in research mode first")
+        mask = training_mask(batch, train_mask)
+        y = y[mask]
         present = np.unique(y)
         self._class_ids = present
         # repo settings: n_estimators=200, max_depth=None
         self._clf = RandomForestClassifier(n_estimators=200, random_state=42, n_jobs=-1)
-        self._clf.fit(batch.features, y)
+        self._clf.fit(batch.features[mask], y)
         self._importances = dict(zip(batch.feature_names, self._clf.feature_importances_))
         self._fitted = True
 
@@ -176,25 +185,12 @@ class SVMGeneratorStator(BaseWTModel):
         y = _step_labels(batch)
         if y is None:
             raise RuntimeError("m12 needs labels; fit in research mode first")
-        elec_fault = np.isin(np.array(FAULT_CLASSES, dtype=object)[y], ["converter_fault"])
-        if elec_fault.sum() == 0:
-            # Keep the adapter connected even when this record has no labelled
-            # converter_fault: treat extreme generator-current residual as the
-            # electrical-fault class (weak labels, documented in explanation).
-            i_cur = next((i for i, n in enumerate(batch.feature_names)
-                          if n.startswith("generator_current_a")), None)
-            if i_cur is None:
-                raise RuntimeError("no electrical-fault examples and no generator_current feature")
-            x = batch.features[:, i_cur]
-            z = np.abs(x - np.median(x)) / (np.median(np.abs(x - np.median(x))) + 1e-9)
-            elec_fault = z > 6.0
-            if elec_fault.sum() == 0:
-                elec_fault = np.zeros(len(x), bool)
-                elec_fault[np.argmax(z)] = True
-            self._weak_labels = True
-        else:
-            self._weak_labels = False
-        X = self._elec(batch)
+        mask = training_mask(batch, train_mask)
+        elec_fault = np.isin(np.array(FAULT_CLASSES, dtype=object)[y[mask]], ["converter_fault"])
+        if len(np.unique(elec_fault)) != 2:
+            raise ValueError("SVM requires labelled healthy and electrical-fault training examples; no synthetic labels are invented")
+        self._weak_labels = False
+        X = self._elec(batch)[mask]
         # subsample for SVM tractability while keeping every fault example;
         # identical pipeline to the repo
         rng = np.random.default_rng(0)
@@ -204,7 +200,7 @@ class SVMGeneratorStator(BaseWTModel):
         idx = np.concatenate([pos, neg])
         self._pipe = make_pipeline(
             StandardScaler(),
-            SVC(kernel="rbf", C=1.0, gamma="scale", probability=True, class_weight="balanced"),
+            SVC(kernel="rbf", C=1.0, gamma="scale", probability=True, class_weight="balanced", random_state=42),
         )
         self._pipe.fit(X[idx], elec_fault[idx].astype(int))
         self._fitted = True
@@ -212,12 +208,12 @@ class SVMGeneratorStator(BaseWTModel):
     def _predict(self, batch: SensorBatch) -> ModelOutput:
         proba = self._pipe.predict_proba(self._elec(batch))
         p_fault = proba[:, list(self._pipe.classes_).index(1)] if 1 in self._pipe.classes_ else np.zeros(len(proba))
-        pred = np.where(p_fault > 0.5, "converter_fault", "healthy").astype(object)
+        pred = np.where(p_fault > 0.5, "converter_fault", "not_electrical").astype(object)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
             prediction=pred, subsystem=Subsystem.GENERATOR,
-            probability={"converter_fault": p_fault, "healthy": 1 - p_fault},
+            probability={"converter_fault": p_fault, "not_electrical": 1 - p_fault},
             explanation=("SVM-RBF electrical-fault probability (generator/converter channels only)"
                          + (" [weak labels: generator-current residual]" if getattr(self, "_weak_labels", False) else "")),
         )
@@ -251,39 +247,30 @@ class CNN1DBearingVibration(BaseWTModel):
         waves, idx = batch.vib_waveforms, batch.vib_index
         if waves is None:
             raise RuntimeError("no vibration view available")
-        kinds = fault_kinds_from_batch(batch)
-        y = np.zeros(len(idx), dtype=int)
-        if kinds is not None:
-            for j, i in enumerate(idx):
-                k = kinds[i] or "healthy"
-                y[j] = VIB_CLASSES.index("bearing_wear") if k == "bearing_wear" else (
-                    VIB_CLASSES.index("other") if k != "healthy" else 0)
-        model = mod.build_1d_cnn((waves.shape[1], 1), num_classes=len(VIB_CLASSES))
+        labels = _step_labels(batch)
+        if labels is None:
+            raise ValueError("CNN requires labelled training examples")
+        keep = training_mask(batch, train_mask)[idx]
+        if not keep.any():
+            raise ValueError("no training waveforms")
+        model = mod.build_1d_cnn((waves.shape[1], 1), num_classes=len(FAULT_CLASSES))
         import tensorflow as tf
-        yoh = tf.keras.utils.to_categorical(y, num_classes=len(VIB_CLASSES))
-        model.fit(waves[..., None], yoh, epochs=4, batch_size=64, verbose=0)
+        yoh = tf.keras.utils.to_categorical(labels[idx][keep], num_classes=len(FAULT_CLASSES))
+        model.fit(waves[keep, ..., None], yoh, epochs=4, batch_size=64, verbose=0)
         self._model = model
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
         waves, idx = batch.vib_waveforms, batch.vib_index
         proba = self._model.predict(waves[..., None], verbose=0)
-        # spread waveform-level predictions onto steps
-        n = batch.n_steps
-        p_steps = {c: np.zeros(n) for c in VIB_CLASSES}
-        pred = np.array(["healthy"] * n, dtype=object)
-        j = 0
-        for t in range(n):
-            while j < len(idx) - 1 and idx[j + 1] <= t:
-                j += 1
-            for ci, c in enumerate(VIB_CLASSES):
-                p_steps[c][t] = proba[j, ci]
-            pred[t] = VIB_CLASSES[int(np.argmax(proba[j]))]
+        p = hold_probabilities(proba, idx, batch.n_steps)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            prediction=pred, probability=p_steps, subsystem=Subsystem.DRIVETRAIN,
-            explanation="1D-CNN class probabilities on vibration waveform surrogates",
+            prediction=np.asarray(FAULT_CLASSES, object)[p.argmax(1)],
+            probability={c: p[:, i] for i, c in enumerate(FAULT_CLASSES)},
+            subsystem=Subsystem.DRIVETRAIN,
+            explanation="CNN canonical fault probabilities from vibration surrogates; uniform during warmup",
         )
 
 
@@ -302,7 +289,7 @@ class SNNEventVibration(BaseWTModel):
         deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
         fallback="m01-1dcnn-bearing",
         subsystem_focus=["drivetrain"],
-        notes="delta/threshold event encoding; spike counts as class evidence",
+        notes="delta/threshold event encoding; differentiable membrane logits as class evidence",
     )
 
     def _check_deps(self) -> None:
@@ -312,10 +299,10 @@ class SNNEventVibration(BaseWTModel):
             raise ImportError("EventSNN not defined (snntorch missing at repo import)")
 
     @staticmethod
-    def _events(waves: np.ndarray, bins: int = 64) -> np.ndarray:
+    def _events(waves: np.ndarray, bins: int = 64, threshold=None) -> np.ndarray:
         """Delta-threshold event encoding: fraction of threshold crossings per bin."""
         d = np.abs(np.diff(waves, axis=1))
-        thr = np.percentile(d, 90)
+        thr = np.percentile(d, 90) if threshold is None else threshold
         ev = (d > thr).astype(np.float32)
         L = ev.shape[1] // bins * bins
         return ev[:, :L].reshape(ev.shape[0], bins, -1).mean(axis=2)
@@ -324,21 +311,23 @@ class SNNEventVibration(BaseWTModel):
         import torch
         mod = load_repo_module("wt-pm-snn-event-vibration")
         waves, idx = batch.vib_waveforms, batch.vib_index
-        kinds = fault_kinds_from_batch(batch)
-        y = np.zeros(len(idx), dtype=int)
-        if kinds is not None:
-            for j, i in enumerate(idx):
-                k = kinds[i] or "healthy"
-                y[j] = 1 if k == "bearing_wear" else (2 if k != "healthy" else 0)
-        X = self._events(waves)
-        net = mod.EventSNN(input_size=X.shape[1], hidden=64, output_size=3)
+        labels = _step_labels(batch)
+        if labels is None or waves is None:
+            raise ValueError("SNN requires labelled training waveforms")
+        keep = training_mask(batch, train_mask)[idx]
+        if not keep.any():
+            raise ValueError("no training waveforms")
+        waves, y = waves[keep], labels[idx][keep]
+        self._event_threshold = float(np.percentile(np.abs(np.diff(waves, axis=1)), 90))
+        X = self._events(waves, threshold=self._event_threshold)
+        net = mod.EventSNN(input_size=X.shape[1], hidden=64, output_size=len(FAULT_CLASSES))
         opt = torch.optim.Adam(net.parameters(), lr=2e-3)
         xb = torch.tensor(X, dtype=torch.float32)
         yb = torch.tensor(y)
         for _ in range(40):
             opt.zero_grad()
             spk, m1, m2 = net(xb)
-            loss = torch.nn.functional.cross_entropy(spk, yb)
+            loss = torch.nn.functional.cross_entropy(m2, yb)
             loss.backward()
             opt.step()
         self._net = net
@@ -347,27 +336,31 @@ class SNNEventVibration(BaseWTModel):
     def _predict(self, batch: SensorBatch) -> ModelOutput:
         import torch
         waves, idx = batch.vib_waveforms, batch.vib_index
-        X = self._events(waves)
+        X = self._events(waves, threshold=self._event_threshold)
+        self._net.eval()
         with torch.no_grad():
-            spk, _, _ = self._net(torch.tensor(X, dtype=torch.float32))
-            proba = torch.softmax(spk, dim=1).numpy()
-        classes = ["healthy", "bearing_wear", "other"]
-        n = batch.n_steps
-        p_steps = {c: np.zeros(n) for c in classes}
-        pred = np.array(["healthy"] * n, dtype=object)
-        j = 0
-        for t in range(n):
-            while j < len(idx) - 1 and idx[j + 1] <= t:
-                j += 1
-            for ci, c in enumerate(classes):
-                p_steps[c][t] = proba[j, ci]
-            pred[t] = classes[int(np.argmax(proba[j]))]
+            _, _, membrane = self._net(torch.tensor(X, dtype=torch.float32))
+            proba = torch.softmax(membrane, dim=1).numpy()
+        p = hold_probabilities(proba, idx, batch.n_steps)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            prediction=pred, probability=p_steps, subsystem=Subsystem.DRIVETRAIN,
-            explanation="SNN spike-based class evidence on event-encoded vibration",
+            prediction=np.asarray(FAULT_CLASSES, object)[p.argmax(1)],
+            probability={c: p[:, i] for i, c in enumerate(FAULT_CLASSES)},
+            subsystem=Subsystem.DRIVETRAIN,
+            explanation="SNN membrane class evidence; event threshold fixed on training data",
         )
+
+
+def nt_xent(z1, z2, temperature=0.5):
+    import torch
+    if len(z1) < 2 or temperature <= 0:
+        raise ValueError("NT-Xent needs at least two pairs and positive temperature")
+    z = torch.nn.functional.normalize(torch.cat([z1, z2]), dim=1)
+    logits = z @ z.T / temperature
+    logits = logits.masked_fill(torch.eye(len(z), dtype=torch.bool, device=z.device), float('-inf'))
+    targets = (torch.arange(len(z), device=z.device) + len(z1)) % len(z)
+    return torch.nn.functional.cross_entropy(logits, targets)
 
 
 # ---------------------------------------------------------------------------
@@ -383,7 +376,7 @@ class ContrastiveSSLVibration(BaseWTModel):
         resource_requirements=["torch"],
         typical_latency_ms=4000,
         deployment_targets=[Deployment.CLOUD, Deployment.EDGE_GPU],
-        notes="self-supervised; NT-Xent as shipped by the repo (simplified loss)",
+        notes="upstream encoder with corrected NT-Xent positive/negative-pair loss",
     )
 
     def _check_deps(self) -> None:
@@ -393,7 +386,7 @@ class ContrastiveSSLVibration(BaseWTModel):
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         import torch
         mod = load_repo_module("wt-pm-contrastive-ssl-vibration")
-        waves = batch.vib_waveforms
+        waves = batch.vib_waveforms[training_mask(batch, train_mask)[batch.vib_index]]
         enc = mod.ContrastiveEncoder(input_dim=waves.shape[1], proj_dim=32)
         opt = torch.optim.Adam(enc.parameters(), lr=1e-3)
         xb = torch.tensor(waves[:, None, :], dtype=torch.float32)
@@ -403,10 +396,11 @@ class ContrastiveSSLVibration(BaseWTModel):
             a1 = xb + 0.05 * torch.randn_like(xb)
             a2 = xb * float(rng.uniform(0.9, 1.1)) + 0.05 * torch.randn_like(xb)
             z1, z2 = enc(a1), enc(a2)
-            loss = mod.nt_xent_loss(z1, z2)   # repo's own loss
+            loss = nt_xent(z1, z2)
             opt.zero_grad()
             loss.backward()
             opt.step()
+        enc.eval()
         self._enc = enc
         self._fitted = True
 
@@ -475,7 +469,7 @@ class DBNFeatureExtraction(BaseWTModel):
         v = torch.sigmoid(torch.tensor(self._std(batch.features), dtype=torch.float32))
         with torch.no_grad():
             for rbm in self._dbn.rbms:
-                v, _ = rbm.sample_h(v)
+                v = torch.sigmoid(v @ rbm.W + rbm.h_bias)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
@@ -497,7 +491,7 @@ class AeroZipCompressor(BaseWTModel):
         resource_requirements=["torch"],
         typical_latency_ms=1200,
         deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
-        notes="8:1 telemetry compression for backhaul; latent doubles as features",
+        notes="latent bottleneck for telemetry; actual backhaul byte savings unmeasured",
     )
 
     def _check_deps(self) -> None:

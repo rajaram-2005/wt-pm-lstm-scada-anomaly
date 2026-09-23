@@ -22,24 +22,31 @@ from wtpm_platform.base import BaseWTModel, ModelSpec, load_repo_module
 from wtpm_platform.contracts import Deployment, ModelOutput, SensorBatch, Subsystem, TaskType
 from wtpm_platform.data import degradation_target, fault_kinds_from_batch
 from wtpm_platform.adapters.anomaly import _standardiser
+from wtpm_platform.protocol import training_mask, window_training_mask, sample_hours, isolated_numpy_rng
 
 SAMPLE_HOURS = 1.0 / 6.0  # 10-minute cadence
 
 
-def rul_proxy_hours(batch: SensorBatch, horizon_hours: float = 400.0) -> np.ndarray:
-    """Time to next fault onset (hours), capped; proxy target, not real life data."""
+def rul_proxy_hours(batch: SensorBatch, horizon_hours: float = 400.0,
+                    train_mask=None) -> np.ndarray:
+    """Time to labelled onset using real timestamps, never excluded future labels.
+
+    The horizon is a censored research proxy, not observed remaining useful life.
+    """
     kinds = fault_kinds_from_batch(batch)
-    n = batch.n_steps
-    rul = np.full(n, horizon_hours)
     if kinds is None:
-        return rul
-    onsets = [i for i in range(1, n) if kinds[i] and not kinds[i - 1]]
-    for t in range(n):
-        nxt = [o for o in onsets if o >= t]
-        if nxt:
-            rul[t] = min((nxt[0] - t) * SAMPLE_HOURS, horizon_hours)
-        if kinds[t]:
-            rul[t] = 0.0
+        raise ValueError("RUL proxy needs fault annotations (or measured RUL targets)")
+    sample_hours(batch)
+    allowed = np.ones(batch.n_steps, bool) if train_mask is None else training_mask(batch, train_mask)
+    active = np.array([bool(k) and k != "healthy" for k in kinds]) & allowed
+    onsets = np.flatnonzero(active & ~np.r_[False, active[:-1]])
+    rul = np.full(batch.n_steps, horizon_hours)
+    for t in np.flatnonzero(allowed):
+        nxt = onsets[onsets >= t]
+        if len(nxt):
+            rul[t] = min((batch.timestamps[nxt[0]] - batch.timestamps[t]) / 3600, horizon_hours)
+        if active[t]:
+            rul[t] = 0
     return rul
 
 
@@ -65,30 +72,45 @@ class HMMDegradationStates(BaseWTModel):
         from hmmlearn.hmm import GaussianHMM  # noqa: F401
 
     def _obs(self, batch: SensorBatch) -> np.ndarray:
-        hi = degradation_target(batch)
-        cols = [hi]
-        for ch in ("bearing_vib_rms_mm_s", "gearbox_oil_temp_c"):
-            if ch in batch.channel_names:
-                cols.append(batch.channel(ch))
-        return np.column_stack(cols)
+        channels = [batch.channel(c) for c in ("bearing_vib_rms_mm_s", "gearbox_oil_temp_c")
+                    if c in batch.channel_names]
+        if not channels:
+            raise ValueError("HMM needs vibration/thermal observations")
+        return np.column_stack(channels)
 
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         from hmmlearn.hmm import GaussianHMM
-        obs = self._obs(batch)
-        # same estimator settings as the repo's train_hmm()
+        mask = training_mask(batch, train_mask)
+        raw = self._obs(batch)[mask]
+        self._std = _standardiser(raw)
+        obs = self._std(raw)
+        ids = np.flatnonzero(mask)
+        lengths = [len(r) for r in np.split(ids, np.where(np.diff(ids) > 1)[0] + 1)]
         self._hmm = GaussianHMM(n_components=self.N_STATES, covariance_type="diag",
                                 n_iter=100, random_state=42)
-        self._hmm.fit(obs)
+        self._hmm.fit(obs, lengths=lengths)
         # order states by mean health indicator => monotone severity
-        order = np.argsort(self._hmm.means_[:, 0])
+        order = np.argsort(self._hmm.means_.mean(axis=1))
+        self._order = order
         self._rank = {s: r for r, s in enumerate(order)}
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
-        obs = self._obs(batch)
-        raw = self._hmm.predict(obs)
-        post = self._hmm.predict_proba(obs)
-        states = np.array([self._rank[s] for s in raw])
+        from scipy.special import logsumexp
+        obs = self._std(self._obs(batch))
+        # Forward filtering, not Viterbi/smoothed probabilities that use future rows.
+        emissions = self._hmm._compute_log_likelihood(obs)
+        alpha = np.log(np.maximum(self._hmm.startprob_, 1e-300))
+        trans = np.log(np.maximum(self._hmm.transmat_, 1e-300))
+        post = []
+        for t, emission in enumerate(emissions):
+            if t:
+                alpha = logsumexp(alpha[:, None] + trans, axis=0)
+            alpha += emission
+            alpha -= logsumexp(alpha)
+            post.append(np.exp(alpha)[self._order])
+        post = np.asarray(post)
+        states = post.argmax(axis=1)
         conf = post.max(axis=1)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
@@ -97,7 +119,8 @@ class HMMDegradationStates(BaseWTModel):
             uncertainty=1.0 - conf,
             explanation=f"HMM {self.N_STATES}-state degradation (0=healthy .. {self.N_STATES-1}=severe), "
                         "severity-ordered by health indicator",
-            extra={"posterior": post, "transmat": self._hmm.transmat_},
+            probability={f"state_{i}": post[:, i] for i in range(self.N_STATES)},
+            extra={"posterior": post, "transmat": self._hmm.transmat_[np.ix_(self._order, self._order)]},
         )
 
 
@@ -124,14 +147,14 @@ class MLPRULRegression(BaseWTModel):
         from sklearn.neural_network import MLPRegressor
         from sklearn.pipeline import make_pipeline
         from sklearn.preprocessing import StandardScaler
-        y = rul_proxy_hours(batch)
+        y = rul_proxy_hours(batch, train_mask=train_mask)
         # repo pipeline: StandardScaler + MLP(128, 64)
         self._pipe = make_pipeline(
             StandardScaler(),
             MLPRegressor(hidden_layer_sizes=(64, 32), activation="relu",
                          max_iter=300, random_state=42),
         )
-        self._pipe.fit(batch.features, y)
+        self._pipe.fit(batch.features[train_mask], y[train_mask])
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
@@ -184,12 +207,16 @@ class ConvLSTMWearPrognostics(BaseWTModel):
         mod = load_repo_module("wt-pm-convlstm-wear-prognostics")
         imgs = self._images(batch)
         ends = batch.window_index
-        y = rul_proxy_hours(batch)[ends]
+        y = rul_proxy_hours(batch, train_mask=train_mask)[ends]
+        keep = window_training_mask(batch, train_mask)
         S = self.SEQ
         seqs, ys = [], []
-        for i in range(S, len(imgs)):
-            seqs.append(imgs[i - S:i])
-            ys.append(y[i])
+        for i in range(S - 1, len(imgs)):
+            if keep[i - S + 1:i + 1].all():
+                seqs.append(imgs[i - S + 1:i + 1])
+                ys.append(y[i])
+        if not seqs:
+            raise ValueError("no complete ConvLSTM sequences inside train_mask")
         Xs = np.array(seqs)[..., None]
         model = mod.build_convlstm(input_shape=(S, self.GRID, self.GRID, 1))
         model.fit(Xs, np.array(ys), epochs=3, batch_size=32, verbose=0)
@@ -200,17 +227,17 @@ class ConvLSTMWearPrognostics(BaseWTModel):
         imgs = self._images(batch)
         ends = batch.window_index
         S = self.SEQ
-        seqs = [imgs[i - S:i] for i in range(S, len(imgs))]
+        seqs = [imgs[i - S + 1:i + 1] for i in range(S - 1, len(imgs))]
         if not seqs:
             raise RuntimeError("record too short for ConvLSTM sequence")
         pred = self._model.predict(np.array(seqs)[..., None], verbose=0).ravel()
         pred = np.maximum(pred, 0.0)
         n = batch.n_steps
         rul = np.full(n, np.nan)
-        for j, i in enumerate(range(S, len(imgs))):
+        for j, i in enumerate(range(S - 1, len(imgs))):
             rul[ends[i]] = pred[j]
         # forward-fill
-        last = pred[0]
+        last = 400.0  # censored prior before the first complete sequence, no future backfill
         for t in range(n):
             if np.isfinite(rul[t]):
                 last = rul[t]
@@ -245,6 +272,7 @@ class ParticleFilterRUL(BaseWTModel):
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         self._fitted = True  # stateless: filter is (re)initialised per timeline
 
+    @isolated_numpy_rng
     def _predict(self, batch: SensorBatch) -> ModelOutput:
         mod = load_repo_module("wt-pm-particle-filter-rul")
         obs = batch.meta.get("rul_observations")  # (T,) from upstream models
@@ -252,12 +280,20 @@ class ParticleFilterRUL(BaseWTModel):
         n = batch.n_steps
         if obs is None:
             raise RuntimeError("m16 requires meta['rul_observations'] from an upstream RUL model")
-        init = float(np.nanmax(obs[:24])) if np.isfinite(obs[:24]).any() else 400.0
+        obs = np.asarray(obs, float)
+        if obs.shape != (n,) or not np.isfinite(obs).all() or np.any(obs < 0):
+            raise ValueError("RUL observations must be finite, nonnegative and aligned")
+        if deg_state is not None:
+            deg_state = np.asarray(deg_state, float)
+            if deg_state.shape != (n,) or not np.isfinite(deg_state).all() or np.any(deg_state < 0):
+                raise ValueError("degradation states must be finite, nonnegative and aligned")
+        init = float(obs[0])
+        elapsed = sample_hours(batch)
         pf = mod.ParticleFilterRUL(num_particles=800, init_rul=max(init, 1.0))
         est = np.zeros(n)
         std = np.zeros(n)
         for t in range(n):
-            rate = SAMPLE_HOURS
+            rate = elapsed[t]
             if deg_state is not None:      # degrade faster in worse states
                 rate *= (1.0 + 0.8 * float(deg_state[t]))
             pf.predict(degradation_rate=rate, noise=0.5)
@@ -314,7 +350,7 @@ class InformerLongSequence(BaseWTModel):
         mod = load_repo_module("wt-pm-informer-long-sequence")
         W, ends = batch.windows, batch.window_index
         p_idx = list(batch.channel_names).index("power_kw")
-        keep = train_mask[ends]
+        keep = window_training_mask(batch, train_mask)
         X = W[keep]
         self._std = _standardiser(X.reshape(-1, X.shape[-1]))
         Xs = self._std(X)
@@ -330,7 +366,7 @@ class InformerLongSequence(BaseWTModel):
         self._fwd = fwd
         opt = torch.optim.Adam(model.parameters(), lr=1e-3)
         xe = torch.tensor(Xs[:, :-1, :], dtype=torch.float32)
-        xd = torch.tensor(Xs[:, -1:, :], dtype=torch.float32)
+        xd = torch.tensor(Xs[:, -2:-1, :], dtype=torch.float32)
         yb = torch.tensor(Xs[:, -1, p_idx], dtype=torch.float32)
         for _ in range(20):
             opt.zero_grad()
@@ -338,6 +374,7 @@ class InformerLongSequence(BaseWTModel):
             loss = torch.nn.functional.mse_loss(out, yb)
             loss.backward()
             opt.step()
+        model.eval()
         self._model, self._p_idx = model, p_idx
         with torch.no_grad():
             err = np.abs(fwd(xe, xd).squeeze(-1).squeeze(-1).numpy() - yb.numpy())
@@ -351,7 +388,7 @@ class InformerLongSequence(BaseWTModel):
         W, ends = batch.windows, batch.window_index
         Xs = self._std(W)
         xe = torch.tensor(Xs[:, :-1, :], dtype=torch.float32)
-        xd = torch.tensor(Xs[:, -1:, :], dtype=torch.float32)
+        xd = torch.tensor(Xs[:, -2:-1, :], dtype=torch.float32)
         with torch.no_grad():
             pred = self._fwd(xe, xd).squeeze(-1).squeeze(-1).numpy()
         err = np.abs(pred - Xs[:, -1, self._p_idx])
@@ -360,5 +397,6 @@ class InformerLongSequence(BaseWTModel):
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
             anomaly_score=score,
+            extra={"forecast_standardized": pred, "window_index": ends},
             explanation="Informer power-forecast residual (placeholder attention; partial)",
         )

@@ -1,0 +1,21 @@
+# OPTIONAL Blueprint for a NEW full-model service. Review paid pricing first.
+# Existing services: follow docs/deploy-render.md; don't create a duplicate.
+services:
+  - type: web
+    name: wt-pm-command-center-full
+    runtime: docker
+    repo: https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly
+    branch: arena/01a0cc04-wt-pm-lstm-scada-anomaly
+    plan: pro
+    region: frankfurt
+    dockerfilePath: ./Dockerfile.full
+    dockerContext: .
+    healthCheckPath: /ready
+    autoDeployTrigger: off
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: WTPM_REQUIRE_ALL_MODELS
+        value: "1"
+      - key: WTPM_WORKERS
+        value: "1"

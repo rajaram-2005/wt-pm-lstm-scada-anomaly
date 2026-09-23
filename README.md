@@ -80,6 +80,49 @@ for record in result.detection.records:
     print(record.timestamp, record.recommended_action, record.explanation)
 ```
 
+## Local / company Docker deployment (on demand)
+
+Run the full 25-adapter research demo on a company computer without a cloud
+hosting subscription. Requires Docker and about 4 GB RAM available to it.
+
+```bash
+docker compose -f compose.local.yaml build  # once, with internet
+docker compose -f compose.local.yaml up -d --no-build --pull never --wait --wait-timeout 600
+# Open http://localhost:8100 on this computer.
+docker compose -f compose.local.yaml stop   # when finished
+```
+
+The service is **localhost-only**, does not auto-restart, and verifies all 25
+adapters before becoming ready. The image can run offline after the initial
+build. In-memory models/results reset on stop; company production use requires
+additional security, persistence and validation.
+[Local setup, offline transfer and company-use guide](docs/deploy-local.md).
+
+## Website on GitHub Pages
+
+[Open the project website](https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/)
+· [Pages publishing instructions](docs/deploy-pages.md)
+
+GitHub Pages serves the static website only. The Python dashboard and model
+inference need a separate server; Pages cannot replace that runtime.
+
+## Deploy the dashboard/API
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/arena/01a0cc04-wt-pm-lstm-scada-anomaly)
+
+Deploy the Docker-based command center on Render using the included
+`render.yaml`. You must sign in to Render and approve the deployment.
+[Deployment guide and verification steps](docs/deploy-render.md).
+
+**Need every adapter?** Use the opt-in [full CPU deployment profile](docs/deploy-render.md#enable-all-25-adapters-on-the-existing-render-service)
+(`Dockerfile.full`), including the original sibling sources and all required
+frameworks. Budget at least 4 GB RAM and approve hosting costs before switching.
+The free/demo profile intentionally does not run all 25.
+
+**Public research demo only:** simulated data, no authentication, no persistent
+state, and no plant connections. Optional model frameworks and sibling
+repositories are not bundled. Do not upload sensitive SCADA data.
+
 ## Results (rung 1 — simulated data, see `docs/fidelity_ladder.md`)
 
 Reference run: 60 days, 30 epochs, 2 ensemble members, stride 2.

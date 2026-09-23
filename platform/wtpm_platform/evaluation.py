@@ -85,8 +85,10 @@ def rul_metrics(rul_true: np.ndarray, rul_pred: np.ndarray) -> Dict[str, float]:
     # prognostics-standard asymmetric score (late predictions penalised more)
     e = np.asarray(rul_pred) - np.asarray(rul_true)
     a1, a2 = 13.0, 10.0
-    s = np.where(e < 0, np.exp(-e / a1) - 1, np.exp(e / a2) - 1)
-    m["phm_score_mean"] = float(np.mean(np.clip(s, 0, 1e6)))
+    exponent = np.where(e < 0, -e / a1, e / a2)
+    # Clip before exp: clipping its result is too late to prevent overflow.
+    s = np.expm1(np.clip(exponent, 0, np.log1p(1e6)))
+    m["phm_score_mean"] = float(np.mean(s))
     m["late_fraction"] = float((e > 0).mean())
     return m
 
@@ -150,10 +152,13 @@ class Evaluator:
         res = {}
         y = np.array([k if k else "healthy" for k in fault_kind_per_step], dtype=object)
         for o in outputs:
-            if not o.ok or o.prediction is None:
+            if (not o.ok or o.prediction is None or
+                    o.task not in (TaskType.FAULT_CLASSIFICATION, TaskType.EDGE_INFERENCE)):
                 continue
             pred = np.asarray(o.prediction, dtype=object)
             yt = y[-len(pred):]
+            if o.probability and "not_electrical" in o.probability:
+                yt = np.where(yt == "converter_fault", "converter_fault", "not_electrical")
             classes = [c for c in np.unique(yt)]
             acc = float((pred == yt).mean())
             # macro P/R/F1 over classes present in truth

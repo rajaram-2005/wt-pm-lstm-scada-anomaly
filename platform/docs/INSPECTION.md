@@ -4,6 +4,10 @@ Date: 2026-09-21. All 25 repositories cloned and read. **No fabrication policy:*
 what each repo actually contains is recorded verbatim below; the integration
 layer is built around the *currently available* functionality only.
 
+> **2026-09-23 update:** See [CORRECTNESS_AUDIT.md](CORRECTNESS_AUDIT.md) for
+> corrected training/inference behavior, regression evidence and remaining
+> limitations. The table below records the original inspection, not validation.
+
 ## Global findings
 
 1. **24 of the 25 repositories are single-file research stubs**: each contains
@@ -85,6 +89,7 @@ layer is built around the *currently available* functionality only.
   indicator so state index is monotone in severity.
 - m16 `update(observed_rul)` expects an RUL *observation* → fed from m17
   predictions, not ground truth (which production would not have).
-- m18's `PhysicsGuidedLoss(power, torque*ω)` compares *measured* power to the
-  physics identity — adapter feeds measured channels, so the physics term
-  penalises weights only through the shared encoder (as intended).
+- **Correction to the original m18 assessment:** feeding measured power into
+  the physics term provided **no gradient to model weights**. The corrected
+  adapter feeds predicted power, normalizes both sides consistently in kW,
+  and has a gradient/unit regression test.
