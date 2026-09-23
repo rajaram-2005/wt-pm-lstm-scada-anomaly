@@ -80,6 +80,14 @@ for record in result.detection.records:
     print(record.timestamp, record.recommended_action, record.explanation)
 ```
 
+## Website on GitHub Pages
+
+[Open the project website](https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/)
+· [Pages publishing instructions](docs/deploy-pages.md)
+
+GitHub Pages serves the static website only. The Python dashboard and model
+inference need a separate server; Pages cannot replace that runtime.
+
 ## Deploy the dashboard/API
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/arena/01a0cc04-wt-pm-lstm-scada-anomaly)
