@@ -80,6 +80,24 @@ for record in result.detection.records:
     print(record.timestamp, record.recommended_action, record.explanation)
 ```
 
+## Local / company Docker deployment (on demand)
+
+Run the full 25-adapter research demo on a company computer without a cloud
+hosting subscription. Requires Docker and about 4 GB RAM available to it.
+
+```bash
+docker compose -f compose.local.yaml build  # once, with internet
+docker compose -f compose.local.yaml up -d --no-build --pull never --wait --wait-timeout 600
+# Open http://localhost:8100 on this computer.
+docker compose -f compose.local.yaml stop   # when finished
+```
+
+The service is **localhost-only**, does not auto-restart, and verifies all 25
+adapters before becoming ready. The image can run offline after the initial
+build. In-memory models/results reset on stop; company production use requires
+additional security, persistence and validation.
+[Local setup, offline transfer and company-use guide](docs/deploy-local.md).
+
 ## Website on GitHub Pages
 
 [Open the project website](https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/)

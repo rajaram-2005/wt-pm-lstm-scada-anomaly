@@ -27,3 +27,6 @@ production_result.json
 scada_writeback.json
 scada_demo_in.csv
 hot_sample.csv
+
+# Avoid including an exported image in subsequent build contexts
+wt-pm-full.tar
