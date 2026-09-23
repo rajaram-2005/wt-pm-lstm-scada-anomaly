@@ -289,7 +289,7 @@ class SNNEventVibration(BaseWTModel):
         deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
         fallback="m01-1dcnn-bearing",
         subsystem_focus=["drivetrain"],
-        notes="delta/threshold event encoding; spike counts as class evidence",
+        notes="delta/threshold event encoding; differentiable membrane logits as class evidence",
     )
 
     def _check_deps(self) -> None:
@@ -491,7 +491,7 @@ class AeroZipCompressor(BaseWTModel):
         resource_requirements=["torch"],
         typical_latency_ms=1200,
         deployment_targets=[Deployment.CLOUD, Deployment.EDGE_CPU, Deployment.EDGE_GPU],
-        notes="8:1 telemetry compression for backhaul; latent doubles as features",
+        notes="latent bottleneck for telemetry; actual backhaul byte savings unmeasured",
     )
 
     def _check_deps(self) -> None:

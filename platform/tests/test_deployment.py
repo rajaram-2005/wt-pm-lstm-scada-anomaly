@@ -55,6 +55,8 @@ def test_readiness_during_bootstrap(monkeypatch):
 
 def test_demo_analysis_includes_explanation(monkeypatch, tmp_path):
     # Exercise the actual default demo, without optional sibling repositories.
+    # The full Docker image sets strict readiness; this test explicitly selects demo.
+    monkeypatch.delenv("WTPM_REQUIRE_ALL_MODELS", raising=False)
     monkeypatch.setenv("WTPM_EXTERNAL_DIR", str(tmp_path))
     monkeypatch.setattr(api, "_STATE", {})
     api._bootstrap(days=6, seed=7)
