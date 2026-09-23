@@ -55,17 +55,21 @@ def cmd_research(args) -> int:
     from wtpm_platform.adapters.prognostics import rul_proxy_hours
 
     print(f"[research] simulating {args.days} days of labelled SCADA ...")
-    batch = _make_batch(args.days, seed=args.seed)
+    from wtpm_platform.simulate import make_training_batch, without_labels
+    batch = make_training_batch(args.days, seed=args.seed)
     ctx = OperatingContext(mode="research", has_labels=True,
                            has_vibration_waveform=True)
     orch = Orchestrator(max_workers=args.workers)
     batch = orch.prepare(batch)
 
-    print("[research] fitting routed models on the healthy band ...")
+    print("[research] fitting on permitted rows (healthy-only for anomaly models) ...")
     status = orch.fit(batch, ctx)
 
     print("[research] running full analysis ...")
-    result = orch.analyse(batch, ctx, parallel=not args.sequential)
+    live = orch.prepare(without_labels(_make_batch(args.days, seed=args.seed + 100)))
+    result = orch.analyse(live, OperatingContext(mode="production", has_labels=False,
+                                                has_vibration_waveform=True),
+                          parallel=not args.sequential)
 
     # ---- evaluation on a HELD-OUT record (different seed, unseen faults) ----
     print("[research] evaluating on a held-out record (seed+37) ...")
@@ -74,6 +78,8 @@ def cmd_research(args) -> int:
     ev = Evaluator()
     y = np.asarray(eval_batch.meta["fault_label"]).astype(int)
     kinds = eval_batch.meta["fault_kind_per_step"]
+    rul_true = rul_proxy_hours(eval_batch)
+    eval_batch = without_labels(eval_batch)
     outs = []
     for mid in result["model_health"]["ran"]:
         m = orch.registry.get(mid)
@@ -84,7 +90,6 @@ def cmd_research(args) -> int:
         [o for o in outs if o.anomaly_score is not None], y)
     clf_eval = ev.evaluate_classifiers(
         [o for o in outs if o.prediction is not None and o.probability], kinds)
-    rul_true = rul_proxy_hours(eval_batch)
     rul_eval = ev.evaluate_rul_models(
         [o for o in outs if o.rul_hours is not None], rul_true)
 
@@ -95,6 +100,7 @@ def cmd_research(args) -> int:
         config={"days": args.days, "seed": args.seed, "mode": "research"},
         metrics={"anomaly": anomaly_eval, "classification": clf_eval,
                  "rul": rul_eval, "fusion_weights": weights,
+                 "scope": "synthetic validation set; proposed weights require a separate final test set",
                  "fit_status": status,
                  "risk_score": result["risk_score"],
                  "diagnosis": result["what"]["fault"]},
@@ -125,8 +131,9 @@ def cmd_production(args) -> int:
 
     print(f"[production] simulating {args.days} days of live SCADA ...")
     # train on one record, score a *different* one (no labels used at inference)
-    train_batch = _make_batch(args.days, seed=args.seed)
-    live_batch = _make_batch(args.days, seed=args.seed + 100, turbine_id="WT-02")
+    from wtpm_platform.simulate import make_training_batch, without_labels
+    train_batch = make_training_batch(args.days, seed=args.seed)
+    live_batch = without_labels(_make_batch(args.days, seed=args.seed + 100, turbine_id="WT-02"))
 
     ctx_fit = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
     ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
@@ -342,7 +349,9 @@ def cmd_fleet(args) -> int:
     if "tls" in locals():
         b0.meta["fault_kind_per_step"] = tls[0].meta.get("fault_kind_per_step")
         b0.meta["fault_label"] = tls[0].fault_label
-    orch.fit(b0, ctx, model_ids=["m14-isolation-forest"], verbose=False)
+    from wtpm_platform.simulate import make_training_batch
+    orch.fit(orch.prepare(make_training_batch(args.days, args.seed + 500)), ctx,
+             model_ids=["m14-isolation-forest", "m20-gnn-cascade"], verbose=False)
     batches = [orch.prepare(b) for b in batches]
     # wake edges: chain by layout order (upstream -> downstream, both dirs)
     n = len(batches)
@@ -364,7 +373,8 @@ def cmd_edge(args) -> int:
     from wtpm_platform.contracts import OperatingContext
     from wtpm_platform.orchestrator import Orchestrator
 
-    batch = _make_batch(args.days, seed=args.seed)
+    from wtpm_platform.simulate import make_training_batch
+    batch = make_training_batch(args.days, seed=args.seed)
     orch = Orchestrator()
     batch = orch.prepare(batch)
     ctx = OperatingContext(mode="research", has_labels=True)
@@ -389,12 +399,16 @@ def cmd_agent(args) -> int:
     from wtpm_platform.orchestrator import Orchestrator
 
     print(f"[agent] Hermes loop on {args.days} days of SCADA ...")
-    batch = _make_batch(args.days, seed=args.seed)
+    from wtpm_platform.simulate import make_training_batch
+    batch = make_training_batch(args.days, seed=args.seed)
     orch = Orchestrator(max_workers=args.workers)
     ctx = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
     batch = orch.prepare(batch)
     orch.fit(batch, ctx, verbose=not args.quiet if hasattr(args, "quiet") else False)
-    result = orch.analyse(batch, ctx)
+    from wtpm_platform.simulate import without_labels
+    live = orch.prepare(without_labels(_make_batch(args.days, seed=args.seed + 100)))
+    result = orch.analyse(live, OperatingContext(mode="production", has_labels=False,
+                                                has_vibration_waveform=True))
     hermes = result.get("hermes") or {}
     print(f"\n[agent] goal: {hermes.get('goal')}")
     print("[agent] principles:", ", ".join(hermes.get("principles") or []))

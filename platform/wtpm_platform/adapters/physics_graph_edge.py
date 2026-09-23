@@ -21,6 +21,7 @@ from wtpm_platform.contracts import (
 )
 from wtpm_platform.data import SAFETY_CHANNELS, degradation_target
 from wtpm_platform.adapters.anomaly import _standardiser, robust_calibrate
+from wtpm_platform.protocol import training_mask
 
 
 # ---------------------------------------------------------------------------
@@ -70,12 +71,18 @@ class PGBNNWindTurbine(BaseWTModel):
         om = torch.tensor(omega[train_mask], dtype=torch.float32)
         # small BNN from the repo's BayesianLinear blocks
         l1, l2 = mod.BayesianLinear(X.shape[1], 32), mod.BayesianLinear(32, 1)
-        lossf = mod.PhysicsGuidedLoss(lambda_physics=1e-7)  # repo's loss (kW scale)
+        lossf = mod.PhysicsGuidedLoss(lambda_physics=0.1)  # repo's loss (kW scale)
         opt = torch.optim.Adam(list(l1.parameters()) + list(l2.parameters()), lr=5e-3)
         for _ in range(150):
             opt.zero_grad()
             pred = l2(torch.relu(l1(xb))).squeeze(-1)
-            loss = lossf(pred, yb, pw / 1e3, tq / 1e3, om * 60 / (2 * np.pi))
+            # Both sides are kW / training scale. Crucially power depends on pred.
+            loss = lossf(pred, yb, pred + self._ymu / self._ysd,
+                         0.94 * tq / 1e3 / self._ysd, om * 60 / (2 * np.pi))
+            kl = sum((layer.w_mu.square() + layer.w_logvar.exp() - 1 - layer.w_logvar).mean()
+                     + (layer.b_mu.square() + layer.b_logvar.exp() - 1 - layer.b_logvar).mean()
+                     for layer in (l1, l2)) * 0.5
+            loss = loss + 1e-4 * kl
             loss.backward()
             opt.step()
         self._l1, self._l2 = l1, l2
@@ -99,9 +106,9 @@ class PGBNNWindTurbine(BaseWTModel):
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
             anomaly_score=self._cal(err),
-            uncertainty=std * self._ysd,
+            uncertainty=std / self._cal.scale,
             explanation="physics-guided BNN power residual; uncertainty = MC weight sampling",
-            extra={"power_pred_kw": mean * self._ysd + self._ymu},
+            extra={"power_pred_kw": mean * self._ysd + self._ymu, "power_std_kw": std * self._ysd},
         )
 
 
@@ -131,23 +138,23 @@ class DigitalTwinSurrogate(BaseWTModel):
         load_repo_module("wt-pm-digital-twin-surrogate")
 
     def _x(self, batch: SensorBatch) -> np.ndarray:
-        return np.column_stack([batch.channel(c) for c in self.IN_CH if c in batch.channel_names])
+        return np.column_stack([batch.channel(c) for c in self.IN_CH])
 
     @staticmethod
-    def _targets(batch: SensorBatch) -> np.ndarray:
+    def _targets(batch: SensorBatch, train_mask) -> np.ndarray:
         """Physics-proxy load targets (labelled as proxies, not FEA truth)."""
         v = batch.channel("wind_speed_ms")
         rpm = batch.channel("rotor_speed_rpm")
         vib = batch.channel("bearing_vib_rms_mm_s")
         stress = 0.6 * v ** 2 + 0.4 * rpm ** 2 / 10          # von-Mises proxy
         deflect = 0.02 * v ** 2                               # tip deflection proxy
-        fatigue = np.cumsum(np.maximum(vib - np.median(vib), 0)) / max(len(v), 1)
+        fatigue = np.maximum(vib - np.median(vib[train_mask]), 0) ** 2
         return np.column_stack([stress, deflect, fatigue])
 
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         import torch
         mod = load_repo_module("wt-pm-digital-twin-surrogate")
-        X, Y = self._x(batch)[train_mask], self._targets(batch)[train_mask]
+        X, Y = self._x(batch)[train_mask], self._targets(batch, train_mask)[train_mask]
         self._stdx, = (_standardiser(X),)
         self._ymu, self._ysd = Y.mean(0), Y.std(0) + 1e-9
         xb = torch.tensor(self._stdx(X), dtype=torch.float32)
@@ -202,8 +209,8 @@ class GNNTurbineCascade(BaseWTModel):
         resource_requirements=["torch", "torch-geometric (optional: repo has fallback)"],
         typical_latency_ms=2000,
         deployment_targets=[Deployment.CLOUD],
-        notes="node = turbine, edge = wake coupling from farm layout; "
-              "repo ships its own linear fallback when PyG is absent",
+        notes="training-only synthetic vibration-risk supervision on self-loops; "
+              "fixed weights applied to supplied fleet graph, not validated wake physics",
     )
 
     RISK = ["low", "elevated", "high", "critical"]
@@ -216,7 +223,8 @@ class GNNTurbineCascade(BaseWTModel):
     def _node_features(batches: List[SensorBatch], scores: Dict[str, np.ndarray]) -> np.ndarray:
         feats = []
         for b in batches:
-            s = scores.get(b.turbine_id, np.zeros(b.n_steps))
+            # Match training units: vibration, not unrelated anomaly z-scores.
+            s = b.channel("bearing_vib_rms_mm_s")
             tail = slice(-144, None)  # last day
             feats.append([
                 float(np.mean(s[tail])), float(np.max(s[tail])),
@@ -227,62 +235,73 @@ class GNNTurbineCascade(BaseWTModel):
             ])
         return np.asarray(feats, dtype=np.float32)
 
+    @staticmethod
+    def _step_nodes(batch):
+        vib = batch.channel("bearing_vib_rms_mm_s")
+        return np.column_stack([vib, vib, batch.channel("power_kw"),
+                                batch.channel("wind_speed_ms"), vib,
+                                batch.channel("gearbox_oil_temp_c")]).astype(np.float32)
+
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
-        # Trained lazily in predict_fleet (needs the whole farm, not one turbine).
+        import torch
+        mod = load_repo_module("wt-pm-gnn-turbines-cascade")
+        X = self._step_nodes(batch)[training_mask(batch, train_mask)]
+        self._std = _standardiser(X)
+        xb = torch.tensor(self._std(X), dtype=torch.float32)
+        # Explicit synthetic risk proxy, trained only here, never on evaluation nodes.
+        target = torch.tensor(np.digitize(X[:, 1], [3.0, 6.0, 12.0]), dtype=torch.long)
+        ids = torch.arange(len(X))
+        edges = torch.stack([ids, ids])
+        net = mod.TurbineCascadeGNN(in_channels=6, hidden=32, out_classes=4)
+        opt = torch.optim.Adam(net.parameters(), lr=1e-2)
+        for _ in range(100):
+            opt.zero_grad()
+            loss = torch.nn.functional.cross_entropy(net(xb, edges), target)
+            loss.backward()
+            opt.step()
+        net.eval()
+        self._net = net
         self._fitted = True
 
+    def _probabilities(self, nodes, edge_index):
+        import torch
+        if not self.fitted:
+            raise RuntimeError("GNN must be fitted on training data before inference")
+        edge_index = np.asarray(edge_index)
+        if (edge_index.ndim != 2 or edge_index.shape[0] != 2 or
+                edge_index.dtype.kind not in 'iu' or np.any(edge_index < 0) or
+                np.any(edge_index >= len(nodes))):
+            raise ValueError("invalid graph edge_index")
+        self._net.eval()
+        with torch.no_grad():
+            return torch.softmax(self._net(
+                torch.tensor(self._std(nodes), dtype=torch.float32),
+                torch.tensor(edge_index, dtype=torch.long)), dim=1).numpy()
+
     def _predict(self, batch: SensorBatch) -> ModelOutput:
-        # Single-turbine self-loop so m20 stays in the per-turbine pipeline.
-        # Fleet analysis still uses predict_fleet() with the wake graph.
-        scores = {batch.turbine_id: batch.channel("bearing_vib_rms_mm_s")}
-        ei = np.array([[0], [0]], dtype=int)
-        fleet = self.predict_fleet([batch], scores, ei)
-        n = batch.n_steps
-        pred = np.array([fleet.prediction[0]] * n, dtype=object)
-        proba = {k: np.full(n, float(v[0])) for k, v in (fleet.probability or {}).items()}
+        ids = np.arange(batch.n_steps)
+        p = self._probabilities(self._step_nodes(batch), np.array([ids, ids]))
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            subsystem=Subsystem.FARM, prediction=pred, probability=proba,
-            explanation="GNN cascade risk on a self-loop (single turbine); "
-                        "use analyse_fleet() for the wake-coupled farm",
-            extra=fleet.extra,
+            prediction=np.asarray(self.RISK, object)[p.argmax(1)],
+            probability={c: p[:, i] for i, c in enumerate(self.RISK)},
+            subsystem=Subsystem.FARM,
+            explanation="Fixed-weight GNN on independent self-loop nodes; synthetic vibration-risk proxy, not validated wake-cascade prediction",
         )
 
-    def predict_fleet(
-        self,
-        batches: List[SensorBatch],
-        anomaly_scores: Dict[str, np.ndarray],
-        edge_index: np.ndarray,           # (2, E) wake-coupling edges
-    ) -> ModelOutput:
-        import torch
-        mod = load_repo_module("wt-pm-gnn-turbines-cascade")
-        X = self._node_features(batches, anomaly_scores)
-        Xn = (X - X.mean(0)) / (X.std(0) + 1e-9)
-        # weak labels for training: risk band from own + upstream anomaly level
-        own = X[:, 1]
-        risk = np.digitize(own, [1.5, 3.0, 6.0])
-        net = mod.TurbineCascadeGNN(in_channels=X.shape[1], hidden=32, out_classes=4)
-        xb = torch.tensor(Xn)
-        ei = torch.tensor(edge_index, dtype=torch.long)
-        opt = torch.optim.Adam(net.parameters(), lr=1e-2)
-        yb = torch.tensor(risk)
-        for _ in range(150):
-            opt.zero_grad()
-            out = net(xb, ei)
-            loss = torch.nn.functional.cross_entropy(out, yb)
-            loss.backward()
-            opt.step()
-        with torch.no_grad():
-            proba = torch.softmax(net(xb, ei), dim=1).numpy()
-        pred = np.array([self.RISK[i] for i in proba.argmax(1)], dtype=object)
-        ts = np.array([b.timestamps[-1] for b in batches])
+    def predict_fleet(self, batches, anomaly_scores, edge_index) -> ModelOutput:
+        # Use the same feature units as training; no per-fleet refitting/scaling.
+        nodes = self._node_features(batches, {
+            b.turbine_id: b.channel("bearing_vib_rms_mm_s") for b in batches})
+        p = self._probabilities(nodes, edge_index)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
-            turbine_id="FLEET", timestamps=ts, subsystem=Subsystem.FARM,
-            prediction=pred,
-            probability={c: proba[:, i] for i, c in enumerate(self.RISK)},
-            explanation="GNN cascade-risk class per turbine over the wake graph",
+            turbine_id="FLEET", timestamps=np.array([b.timestamps[-1] for b in batches]),
+            prediction=np.asarray(self.RISK, object)[p.argmax(1)],
+            probability={c: p[:, i] for i, c in enumerate(self.RISK)},
+            subsystem=Subsystem.FARM,
+            explanation="Fixed-weight GNN risk proxy on supplied graph; not validated wake-cascade physics",
             extra={"turbine_ids": [b.turbine_id for b in batches], "edge_index": edge_index},
         )
 
@@ -385,9 +404,10 @@ class QuantizedMobileNetEdge(BaseWTModel):
             tf.keras.layers.Dense(1, activation="sigmoid"),
         ])
         net.compile(optimizer="adam", loss="binary_crossentropy")
-        net.fit(feats, np.asarray(labels, dtype=np.float32),
+        train_mask = training_mask(batch, train_mask)
+        net.fit(feats[train_mask], np.asarray(labels, dtype=np.float32)[train_mask],
                 epochs=3, batch_size=64, verbose=0)
-        self._tflite = self._convert(net, feats)
+        self._tflite = self._convert(net, feats[train_mask])
         self._interpreter = tf.lite.Interpreter(model_content=self._tflite, num_threads=1)
         self._fitted = True
 
@@ -462,19 +482,18 @@ class TinyMLSafetyRelay(BaseWTModel):
         from sklearn.tree import DecisionTreeClassifier  # noqa: F401
 
     def _x(self, batch: SensorBatch) -> np.ndarray:
-        return np.column_stack([batch.channel(c) for c in SAFETY_CHANNELS
-                                if c in batch.channel_names])
+        return np.column_stack([batch.channel(c) for c in SAFETY_CHANNELS])
 
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         from sklearn.tree import DecisionTreeClassifier
         X = self._x(batch)
-        # trip label: extreme vibration or oil temp against the *healthy* band
-        hi = degradation_target(batch, healthy_mask=train_mask)
-        y = (hi > 1.0).astype(int)
-        if y.sum() == 0:  # ensure both classes exist for the tree
-            y[np.argmax(hi)] = 1
-        self._clf = DecisionTreeClassifier(max_depth=5)  # repo's depth
-        self._clf.fit(X, y)
+        train_mask = training_mask(batch, train_mask)
+        # Demonstration engineering-rule labels, not invented positive examples.
+        y = ((batch.channel("bearing_vib_rms_mm_s") > 12) |
+             (batch.channel("gearbox_oil_temp_c") > 78) |
+             (batch.channel("rotor_speed_rpm") > 25)).astype(int)
+        self._clf = DecisionTreeClassifier(max_depth=5, random_state=42)
+        self._clf.fit(X[train_mask], y[train_mask])
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:

@@ -7,6 +7,7 @@ on:
       - 'compose.local.yaml'
       - 'deployment/**'
       - 'platform/wtpm_platform/**'
+      - 'platform/tests/**'
       - 'tests/test_local_docker.py'
       - '.github/workflows/full-models.yml'
 permissions:
@@ -33,6 +34,12 @@ jobs:
           PY
       - name: Build full CPU image with pinned original model sources
         run: docker compose -f compose.local.yaml build
+      - name: Run correctness regressions against full dependencies and real sources
+        run: |
+          docker run --rm --memory=3g --cpus=2 \
+            -v "$PWD:/checks:ro" -w /checks -e WTPM_TEST_FULL=1 \
+            --entrypoint sh wt-pm-full:local -c \
+            'python -m pip install --user pytest==8.3.5 && python -m pytest -p no:cacheprovider tests platform/tests -ra'
       - name: Verify all 25 models execute without network access or fallbacks
         run: docker run --rm --network none --memory=3g --cpus=2 --entrypoint python wt-pm-full:local deployment/check_full.py
       - name: Start local dashboard and verify HTTP analysis

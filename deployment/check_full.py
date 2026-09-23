@@ -34,9 +34,12 @@ def main():
         return
     from wtpm_platform.cli import _make_batch
     from wtpm_platform.contracts import OperatingContext
-    batch = orch.prepare(_make_batch(6, seed=7))
+    from wtpm_platform.simulate import make_training_batch, without_labels
+    train = orch.prepare(make_training_batch(6, seed=7))
+    batch = orch.prepare(without_labels(_make_batch(6, seed=107)))
     ctx = OperatingContext(mode='research', has_labels=True, has_vibration_waveform=True)
-    fit = orch.fit(batch, ctx)
+    fit = orch.fit(train, ctx)
+    ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
     result = orch.analyse(batch, ctx, parallel=False)
     actual = result['model_health']
     expected = set(orch.registry.ids())
@@ -47,7 +50,7 @@ def main():
     if not shap.get('shap_values') or edge.get('input_dtype') != 'int8' or edge.get('size_bytes', 0) <= 0:
         raise RuntimeError('SHAP / INT8 execution evidence is missing')
     report = {
-        'scope': 'CPU smoke test, six simulated days; not field accuracy validation',
+        'scope': 'CPU held-out execution test: training seed 7, unlabelled inference seed 107; not field accuracy validation',
         'fit': fit, 'model_health': actual,
         'shap': shap, 'edge': edge,
         'duration_seconds': round(time.monotonic() - start, 2),

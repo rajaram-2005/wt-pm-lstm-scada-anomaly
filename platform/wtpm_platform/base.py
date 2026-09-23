@@ -4,7 +4,8 @@ Each of the 25 wt-pm repositories is wrapped by exactly one adapter class
 implementing :class:`BaseWTModel`. The adapter:
 
 * imports the repository's *actual* code (from ``external/<repo>/model.py`` or
-  the installed ``wt_pm_lstm`` package) — it never re-implements the model;
+  the installed ``wt_pm_lstm`` package), or the same estimator family for
+  CSV-only training recipes; integration-specific losses/proxies are documented;
 * converts a platform :class:`SensorBatch` into the repo's expected input;
 * converts the repo's raw output into a :class:`ModelOutput`;
 * declares its capabilities so the ModelRouter can select it honestly.
@@ -15,6 +16,7 @@ box), the adapter reports itself unavailable instead of crashing the platform.
 
 from __future__ import annotations
 
+from functools import wraps
 import importlib.util
 import os
 import sys
@@ -83,6 +85,18 @@ class BaseWTModel(ABC):
 
     spec: ModelSpec
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        fit = cls.__dict__.get("fit")
+        if fit is not None:
+            @wraps(fit)
+            def checked_fit(self, batch, train_mask):
+                from wtpm_platform.protocol import training_mask
+                mask = training_mask(batch, train_mask)
+                self._fitted = False
+                return fit(self, batch, mask)
+            cls.fit = checked_fit
+
     def __init__(self) -> None:
         self._fitted = False
         self._unavailable_reason = ""
@@ -111,7 +125,7 @@ class BaseWTModel(ABC):
     # -- lifecycle ------------------------------------------------------------
     @abstractmethod
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
-        """Train/calibrate on the healthy band of ``batch`` (rows where
+        """Train/calibrate only on the permitted rows of ``batch`` (rows where
         ``train_mask`` is True). Adapters that wrap non-trainable code
         (e.g. the particle filter) may no-op."""
 
@@ -129,7 +143,15 @@ class BaseWTModel(ABC):
             return ModelOutput.failed(mid, task, batch.turbine_id, "not fitted")
         try:
             with Stopwatch() as sw:
+                if batch.n_steps == 0 or not np.isfinite(batch.values).all():
+                    raise ValueError("empty or non-finite input batch")
+                from wtpm_platform.protocol import sample_hours, validate_output
+                sample_hours(batch)
                 out = self._predict(batch)
+                if out.ok and (out.turbine_id != batch.turbine_id or out.model_id != mid or
+                               not np.isin(out.timestamps, batch.timestamps).all()):
+                    raise ValueError("output must match model, turbine and input timestamp subset")
+                validate_output(out)
             out.inference_time_ms = sw.ms
             return out
         except Exception:  # noqa: BLE001
@@ -145,6 +167,7 @@ class BaseWTModel(ABC):
             "reason": self._unavailable_reason or self._fit_error,
             "fit_status": self._fit_status,
             "fit_error": self._fit_error,
+            "training_rows": getattr(self, "_training_rows", None),
             "notes": self.spec.notes,
         }
 

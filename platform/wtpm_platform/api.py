@@ -50,10 +50,14 @@ def _bootstrap(days: float, seed: int) -> None:
         workers = max(1, int(os.environ.get("WTPM_WORKERS", "4")))
         orch = Orchestrator(max_workers=workers)
         _STATE["orchestrator"] = orch  # Show per-model progress while fitting.
-        batch = orch.prepare(_make_batch(days, seed=seed))
-        ctx = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
+        from wtpm_platform.simulate import make_training_batch, without_labels
+        # Training faults are explicit simulations; inference never sees their labels.
+        train = orch.prepare(make_training_batch(days, seed=seed))
+        batch = orch.prepare(without_labels(_make_batch(days, seed=seed + 100, turbine_id="WT-live")))
+        fit_ctx = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
+        ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
         _STATE.update(batch=batch, ctx=ctx)
-        status = orch.fit(batch, ctx, verbose=True)
+        status = orch.fit(train, fit_ctx, verbose=True)
         _STATE["fit_status"] = status
         if not any(m["fitted"] for m in orch.registry.health_report()):
             raise RuntimeError("No models fitted successfully; inspect per-model reasons")
@@ -185,9 +189,10 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/analyse":
                 if payload.get("seed") is not None:
                     from wtpm_platform.cli import _make_batch
-                    batch = orch.prepare(_make_batch(
+                    from wtpm_platform.simulate import without_labels
+                    batch = orch.prepare(without_labels(_make_batch(
                         float(payload.get("days", 10.0)), seed=int(payload["seed"]),
-                        turbine_id=payload.get("turbine_id", "WT-live")))
+                        turbine_id=payload.get("turbine_id", "WT-live"))))
                     _STATE["batch"] = batch
                 if payload.get("fusion_method"):
                     orch.fusion.cfg.method = str(payload["fusion_method"])

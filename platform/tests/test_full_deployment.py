@@ -57,7 +57,7 @@ def test_shap_cannot_report_connected_as_success(monkeypatch):
     model = XAIShapInterpretable()
     monkeypatch.setattr(model, '_check_deps', lambda: None)
     model._fitted = True
-    result = model.predict(SimpleNamespace(turbine_id='test'))
+    result = model.predict(SimpleNamespace(turbine_id='test', n_steps=1, values=np.zeros((1, 1)), timestamps=np.array([0])))
     assert not result.ok
     assert 'fitted upstream tree' in result.error
 
@@ -96,11 +96,13 @@ def test_source_manifest_is_complete():
 @pytest.mark.skipif(os.environ.get('WTPM_TEST_FULL') != '1',
                     reason='requires the full CPU dependencies and real sibling sources')
 def test_full_cpu_pipeline():
-    from wtpm_platform.cli import _make_batch
+    from wtpm_platform.simulate import make_batch, make_training_batch, without_labels
     orch = Orchestrator(max_workers=1)
-    batch = orch.prepare(_make_batch(6, seed=7))
+    training = orch.prepare(make_training_batch(6, seed=7))
+    batch = orch.prepare(without_labels(make_batch(6, seed=107)))
     ctx = OperatingContext(mode='research', has_labels=True, has_vibration_waveform=True)
-    orch.fit(batch, ctx, verbose=False)
+    orch.fit(training, ctx, verbose=False)
+    ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
     result = orch.analyse(batch, ctx, parallel=False)
     api._require_full_result(orch, result)
     assert len(result['model_health']['fitted']) == 25

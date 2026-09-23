@@ -249,19 +249,29 @@ class Orchestrator:
 
     # -- training ------------------------------------------------------------
     def fit(self, batch: SensorBatch, ctx: OperatingContext,
-            train_fraction: float = 0.45,
+            train_fraction: float = 1.0,
             model_ids: Optional[Sequence[str]] = None,
             verbose: bool = True) -> Dict[str, str]:
-        """Fit every routed model on the healthy leading band of the record."""
-        batch = self.prepare(batch) if batch.features is None else batch
-        n = batch.n_steps
-        train_mask = np.zeros(n, bool)
-        train_mask[: int(n * train_fraction)] = True
-        # never train on faulty steps
-        lab = batch.meta.get("fault_label")
-        if lab is not None:
-            train_mask &= np.asarray(lab).astype(int) == 0
+        """Fit on a caller-supplied training record, never the evaluation record.
 
+        Supervised models see labelled training rows; normal-only detectors and
+        encoders additionally exclude fault-labelled rows. Each adapter must
+        honour its mask. train_fraction optionally limits the allowed prefix.
+        """
+        batch = self.prepare(batch) if batch.features is None else batch
+        if not 0 < train_fraction <= 1:
+            raise ValueError("train_fraction must be in (0, 1]")
+        n = batch.n_steps
+        allowed = np.arange(n) < int(n * train_fraction)
+        quality = batch.meta.get("mask")
+        if quality is not None:
+            allowed &= np.asarray(quality, bool).all(axis=1)
+        lab = batch.meta.get("fault_label")
+        healthy = allowed.copy()
+        if lab is not None:
+            healthy &= np.asarray(lab).astype(int) == 0
+        healthy_tasks = {TaskType.ANOMALY_DETECTION, TaskType.FORECASTING,
+                         TaskType.FEATURE_EXTRACTION, TaskType.COMPRESSION}
         wanted = set(model_ids) if model_ids else set(self.registry.ids())
         status: Dict[str, str] = {}
         for mid in sorted(wanted):
@@ -278,7 +288,22 @@ class Orchestrator:
             try:
                 t0 = time.perf_counter()
                 m._fit_status = "fitting"
-                m.fit(batch, train_mask)
+                train_mask = healthy if m.spec.task in healthy_tasks else allowed
+                if not train_mask.any():
+                    raise ValueError("no permitted training samples")
+                needs_labels = m.spec.task in {TaskType.FAULT_CLASSIFICATION, TaskType.EDGE_INFERENCE} or mid in {"m02-convlstm-wear", "m17-mlp-rul"}
+                if needs_labels and not ctx.has_labels:
+                    raise ValueError("supervised fitting requires an explicitly labelled training context")
+                # Training happens sequentially. Seeds do not get reset during inference.
+                seed = int(batch.meta.get("training_seed", 42)) + sum(map(ord, mid))
+                import sys
+                np.random.seed(seed)
+                if "torch" in sys.modules:
+                    sys.modules["torch"].manual_seed(seed)
+                if "tensorflow" in sys.modules:
+                    sys.modules["tensorflow"].keras.utils.set_random_seed(seed)
+                m.fit(batch, train_mask.copy())
+                m._training_rows = int(train_mask.sum())
                 if not m.fitted:
                     raise RuntimeError("fit() returned without marking the model fitted")
                 m._fit_status = "fitted"
@@ -545,5 +570,6 @@ class Orchestrator:
                 out = iso.predict(bb)
                 if out.ok:
                     scores[b.turbine_id] = out.anomaly_score
-        m20.fit(batches[0], np.ones(1, bool))
+        if not m20.fitted:
+            raise RuntimeError("fit m20 on a separate training record before fleet inference")
         return m20.predict_fleet(batches, scores, edge_index)
