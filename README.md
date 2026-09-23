@@ -80,6 +80,18 @@ for record in result.detection.records:
     print(record.timestamp, record.recommended_action, record.explanation)
 ```
 
+## Deploy the dashboard/API
+
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/arena/01a0cc04-wt-pm-lstm-scada-anomaly)
+
+Deploy the Docker-based command center on Render using the included
+`render.yaml`. You must sign in to Render and approve the deployment.
+[Deployment guide and verification steps](docs/deploy-render.md).
+
+**Public research demo only:** simulated data, no authentication, no persistent
+state, and no plant connections. Optional model frameworks and sibling
+repositories are not bundled. Do not upload sensitive SCADA data.
+
 ## Results (rung 1 — simulated data, see `docs/fidelity_ladder.md`)
 
 Reference run: 60 days, 30 epochs, 2 ensemble members, stride 2.

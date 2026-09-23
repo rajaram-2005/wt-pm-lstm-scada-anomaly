@@ -1,6 +1,6 @@
 """HTTP API + operator dashboard for the unified platform (stdlib only).
 
-  GET  /health /registry /plan /last /audit /alerts
+  GET  /health /ready /registry /plan /last /audit /alerts
   POST /analyse  /what-if  /alerts/ack  /feedback
   GET  /         dashboard
 """
@@ -69,6 +69,13 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, {
                 "status": "ok" if _STATE["fitted"] else "starting",
                 "models": None if orch is None else orch.registry.health_report(),
+            })
+        elif path == "/ready":
+            # Liveness (/health) remains available during background fitting.
+            # Hosts must not route traffic until the models are ready.
+            ready = bool(_STATE["fitted"])
+            self._send(200 if ready else 503, {
+                "status": "ready" if ready else "starting",
             })
         elif path == "/registry":
             if orch is None:

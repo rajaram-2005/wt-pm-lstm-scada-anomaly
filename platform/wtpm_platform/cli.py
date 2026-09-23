@@ -578,7 +578,7 @@ def main(argv=None) -> int:
     sp.add_argument("--out", default="edge_artifacts")
     sp.set_defaults(fn=cmd_edge)
     sp = sub.add_parser("serve"); common(sp)
-    sp.add_argument("--port", type=int, default=8100)
+    sp.add_argument("--port", type=int, default=os.environ.get("PORT", "8100"))
     sp.set_defaults(fn=cmd_serve)
     sp = sub.add_parser("fetch-models",
                         help="clone the 24 sibling wt-pm-* repos into external/")

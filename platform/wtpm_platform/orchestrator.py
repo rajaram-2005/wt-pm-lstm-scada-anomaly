@@ -241,6 +241,7 @@ class Orchestrator:
         self.planner = MaintenancePlanner()
         self.costing = CostRiskOptimizer()
         self.audit = DecisionAuditLog()
+        self.hermes = HermesAgent(self)
 
     # -- data prep -----------------------------------------------------------
     def prepare(self, batch: SensorBatch) -> SensorBatch:
