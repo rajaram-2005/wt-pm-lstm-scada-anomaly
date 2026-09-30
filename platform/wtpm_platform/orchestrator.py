@@ -241,6 +241,7 @@ class Orchestrator:
         self.planner = MaintenancePlanner()
         self.costing = CostRiskOptimizer()
         self.audit = DecisionAuditLog()
+        self.hermes = HermesAgent(self)
 
     # -- data prep -----------------------------------------------------------
     def prepare(self, batch: SensorBatch) -> SensorBatch:
@@ -248,34 +249,70 @@ class Orchestrator:
 
     # -- training ------------------------------------------------------------
     def fit(self, batch: SensorBatch, ctx: OperatingContext,
-            train_fraction: float = 0.45,
+            train_fraction: float = 1.0,
             model_ids: Optional[Sequence[str]] = None,
             verbose: bool = True) -> Dict[str, str]:
-        """Fit every routed model on the healthy leading band of the record."""
-        batch = self.prepare(batch) if batch.features is None else batch
-        n = batch.n_steps
-        train_mask = np.zeros(n, bool)
-        train_mask[: int(n * train_fraction)] = True
-        # never train on faulty steps
-        lab = batch.meta.get("fault_label")
-        if lab is not None:
-            train_mask &= np.asarray(lab).astype(int) == 0
+        """Fit on a caller-supplied training record, never the evaluation record.
 
+        Supervised models see labelled training rows; normal-only detectors and
+        encoders additionally exclude fault-labelled rows. Each adapter must
+        honour its mask. train_fraction optionally limits the allowed prefix.
+        """
+        batch = self.prepare(batch) if batch.features is None else batch
+        if not 0 < train_fraction <= 1:
+            raise ValueError("train_fraction must be in (0, 1]")
+        n = batch.n_steps
+        allowed = np.arange(n) < int(n * train_fraction)
+        quality = batch.meta.get("mask")
+        if quality is not None:
+            allowed &= np.asarray(quality, bool).all(axis=1)
+        lab = batch.meta.get("fault_label")
+        healthy = allowed.copy()
+        if lab is not None:
+            healthy &= np.asarray(lab).astype(int) == 0
+        healthy_tasks = {TaskType.ANOMALY_DETECTION, TaskType.FORECASTING,
+                         TaskType.FEATURE_EXTRACTION, TaskType.COMPRESSION}
         wanted = set(model_ids) if model_ids else set(self.registry.ids())
         status: Dict[str, str] = {}
         for mid in sorted(wanted):
             if mid not in self.registry:
                 continue
             m = self.registry.get(mid)
+            m._fitted = False
+            m._fit_error = ""
+            m._fit_status = "checking dependencies"
             if not m.available():
+                m._fit_status = "unavailable"
                 status[mid] = f"unavailable: {m._unavailable_reason}"
                 continue
             try:
                 t0 = time.perf_counter()
-                m.fit(batch, train_mask)
+                m._fit_status = "fitting"
+                train_mask = healthy if m.spec.task in healthy_tasks else allowed
+                if not train_mask.any():
+                    raise ValueError("no permitted training samples")
+                needs_labels = m.spec.task in {TaskType.FAULT_CLASSIFICATION, TaskType.EDGE_INFERENCE} or mid in {"m02-convlstm-wear", "m17-mlp-rul"}
+                if needs_labels and not ctx.has_labels:
+                    raise ValueError("supervised fitting requires an explicitly labelled training context")
+                # Training happens sequentially. Seeds do not get reset during inference.
+                seed = int(batch.meta.get("training_seed", 42)) + sum(map(ord, mid))
+                import sys
+                np.random.seed(seed)
+                if "torch" in sys.modules:
+                    sys.modules["torch"].manual_seed(seed)
+                if "tensorflow" in sys.modules:
+                    sys.modules["tensorflow"].keras.utils.set_random_seed(seed)
+                m.fit(batch, train_mask.copy())
+                m._training_rows = int(train_mask.sum())
+                if not m.fitted:
+                    raise RuntimeError("fit() returned without marking the model fitted")
+                m._fit_status = "fitted"
                 status[mid] = f"fitted in {(time.perf_counter()-t0)*1000:.0f} ms"
             except Exception as exc:  # noqa: BLE001
-                status[mid] = f"fit failed: {type(exc).__name__}: {exc}"
+                m._fitted = False
+                m._fit_status = "fit failed"
+                m._fit_error = f"{type(exc).__name__}: {exc}"
+                status[mid] = f"fit failed: {m._fit_error}"
             if verbose:
                 print(f"  [fit] {mid}: {status[mid]}")
         return status
@@ -300,6 +337,15 @@ class Orchestrator:
         rep_deg = self.infer.run(routed["degradation"], batch, parallel=False)
         rep_rul = self.infer.run([m for m in routed["rul"]
                                   if m != "m16-particle-filter-rul"], batch, parallel=parallel)
+        # SHAP needs a genuinely fitted tree, not a "connected" placeholder.
+        if "m21-xai-shap" in self.registry:
+            xai = self.registry.get("m21-xai-shap")
+            xai.bind_estimator(None, None)
+            for mid in ("m10-random-forest", "m11-xgboost-tabular"):
+                out = rep_clf.outputs.get(mid)
+                if out is not None and out.ok and out.extra.get("estimator") is not None:
+                    xai.bind_estimator(out.extra["estimator"], mid)
+                    break
         rep_sup = self.infer.run(routed.get("support") or [], batch, parallel=parallel)
 
         # WHAT: fused anomaly
@@ -424,9 +470,12 @@ class Orchestrator:
                 "ran": sorted(set(rep_anom.outputs) | set(rep_clf.outputs)
                               | set(rep_deg.outputs) | set(rep_rul.outputs)
                               | set(rep_sup.outputs)
-                              | ({rul_out.model_id} if rul_out is not None and rul_out.ok else set())),
+                              | ({rul_out.model_id} if rul_out is not None and rul_out.ok
+                                 and rul_out.model_id in self.registry else set())),
                 "errors": {**rep_anom.errors, **rep_clf.errors,
-                           **rep_deg.errors, **rep_rul.errors, **rep_sup.errors},
+                           **rep_deg.errors, **rep_rul.errors, **rep_sup.errors,
+                           **({"m16-particle-filter-rul": rul_info["particle_filter_error"]}
+                              if "particle_filter_error" in rul_info else {})},
                 "fallbacks": {**rep_anom.fallbacks_used, **rep_clf.fallbacks_used,
                               **rep_rul.fallbacks_used, **rep_sup.fallbacks_used},
                 "timings_ms": {k: round(v, 1) for k, v in
@@ -434,6 +483,7 @@ class Orchestrator:
                                 **rep_deg.timings_ms, **rep_rul.timings_ms,
                                 **rep_sup.timings_ms}.items()},
                 "connected": sorted(self.registry.ids()),
+                "details": self.registry.health_report(),
                 "fitted": [mid for mid in self.registry.ids()
                            if self.registry.get(mid).fitted],
                 "unavailable": [mid for mid in self.registry.ids()
@@ -447,7 +497,8 @@ class Orchestrator:
                         for k, v in (o.extra or {}).items()
                         if k in ("compression_ratio", "load_names", "tflite_path",
                                  "size_bytes", "status", "embeddings_shape",
-                                 "turbine_ids")}),
+                                 "turbine_ids", "input_dtype", "output_dtype", "shap_values",
+                                 "source_model")}),
                 }
                 for mid, o in rep_sup.outputs.items()
             },
@@ -519,5 +570,6 @@ class Orchestrator:
                 out = iso.predict(bb)
                 if out.ok:
                     scores[b.turbine_id] = out.anomaly_score
-        m20.fit(batches[0], np.ones(1, bool))
+        if not m20.fitted:
+            raise RuntimeError("fit m20 on a separate training record before fleet inference")
         return m20.predict_fleet(batches, scores, edge_index)

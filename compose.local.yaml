@@ -1,0 +1,40 @@
+# Standalone, on-demand full-model dashboard. Do not combine with docker-compose.yml.
+name: wtpm-local
+services:
+  dashboard:
+    image: wt-pm-full:local
+    platform: linux/amd64
+    build:
+      context: .
+      dockerfile: Dockerfile.full
+    init: true
+    restart: "no"
+    ports:
+      # Local access only; there is no application authentication.
+      - "127.0.0.1:8100:8100"
+    environment:
+      PORT: "8100"
+      WTPM_REQUIRE_ALL_MODELS: "1"
+      WTPM_WORKERS: "1"
+      WTPM_EXTERNAL_DIR: /app/external
+    command: ["wt-pm", "serve", "--port", "8100", "--days", "6"]
+    mem_limit: 4g
+    cpus: 2.0
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import json, urllib.request; r = urllib.request.urlopen('http://127.0.0.1:8100/ready', timeout=4); assert json.load(r)['status'] == 'ready'"
+      interval: 10s
+      timeout: 5s
+      start_period: 180s
+      retries: 12
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

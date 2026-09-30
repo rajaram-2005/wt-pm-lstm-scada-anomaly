@@ -1,0 +1,59 @@
+name: full-models
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'Dockerfile.full'
+      - 'compose.local.yaml'
+      - 'deployment/**'
+      - 'platform/wtpm_platform/**'
+      - 'platform/tests/**'
+      - 'tests/test_local_docker.py'
+      - '.github/workflows/full-models.yml'
+permissions:
+  contents: read
+jobs:
+  cpu-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate local-only, on-demand Compose settings
+        run: |
+          docker compose -f compose.local.yaml config --format json > /tmp/wtpm-compose.json
+          python - <<'PY'
+          import json
+          cfg = json.load(open('/tmp/wtpm-compose.json'))
+          assert set(cfg['services']) == {'dashboard'}
+          app = cfg['services']['dashboard']
+          assert app['build']['dockerfile'] == 'Dockerfile.full'
+          assert app['restart'] == 'no'
+          assert app['ports'][0]['host_ip'] == '127.0.0.1'
+          assert app['environment']['WTPM_REQUIRE_ALL_MODELS'] == '1'
+          assert not app.get('volumes')  # No accidental plant/SCADA mounts.
+          PY
+      - name: Build full CPU image with pinned original model sources
+        run: docker compose -f compose.local.yaml build
+      - name: Run correctness regressions against full dependencies and real sources
+        run: |
+          docker run --rm --memory=3g --cpus=2 \
+            -v "$PWD:/checks:ro" -w /checks -e WTPM_TEST_FULL=1 \
+            --entrypoint sh wt-pm-full:local -c \
+            'python -m pip install --user pytest==8.3.5 && python -m pytest -p no:cacheprovider tests platform/tests -ra'
+      - name: Verify all 25 models execute without network access or fallbacks
+        run: docker run --rm --network none --memory=3g --cpus=2 --entrypoint python wt-pm-full:local deployment/check_full.py
+      - name: Start local dashboard and verify HTTP analysis
+        run: |
+          docker compose -f compose.local.yaml up -d --no-build --pull never --wait --wait-timeout 600
+          python deployment/check_local.py --analyse
+      - name: Verify stop and cached restart
+        run: |
+          docker compose -f compose.local.yaml stop
+          test -z "$(docker compose -f compose.local.yaml ps --status running -q)"
+          docker compose -f compose.local.yaml up -d --no-build --pull never --wait --wait-timeout 600
+          python deployment/check_local.py
+      - name: Show container logs and clean up
+        if: always()
+        run: |
+          docker compose -f compose.local.yaml logs --tail=150
+          docker compose -f compose.local.yaml down

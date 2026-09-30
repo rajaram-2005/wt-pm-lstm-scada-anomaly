@@ -1,0 +1,20 @@
+# Public research demo only: no real SCADA data or plant connections.
+services:
+  - type: web
+    name: wt-pm-command-center
+    runtime: docker
+    repo: https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly
+    branch: arena/01a0cc04-wt-pm-lstm-scada-anomaly
+    plan: free
+    region: frankfurt
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    healthCheckPath: /ready
+    autoDeployTrigger: off
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: OPENBLAS_NUM_THREADS
+        value: "1"
+      - key: OMP_NUM_THREADS
+        value: "1"

@@ -98,5 +98,38 @@ def make_batch(days: float, seed: int = 7, turbine_id: str = "WT-01"):
         batch.meta["fault_label"] = tl.fault_label
         batch.meta["simulator"] = "wt_pm_lstm"
         return batch
-    except Exception:
+    except ModuleNotFoundError as exc:
+        if exc.name not in {"wt_pm_lstm", "wt_pm_lstm.config", "wt_pm_lstm.simulate"}:
+            raise
         return simulate_scada(days, seed, turbine_id)
+
+
+def make_training_batch(days: float = 6, seed: int = 7):
+    """Dedicated labelled training simulation covering all seven real injections.
+
+    Short default schedules do not contain converter examples. Rather than
+    fabricate SVM labels, this training-only record explicitly simulates every
+    family. Test/live records must be generated independently.
+    """
+    from wt_pm_lstm.config import DataConfig
+    from wt_pm_lstm.simulate import FaultSpec, simulate_timeline, SENSOR_FAULT_TARGETS
+    from wtpm_platform.data import ingest_timeline
+    cfg = DataConfig()
+    cfg.n_days, cfg.seed = max(float(days), 6.0), seed
+    n = int(cfg.n_days * 144)
+    start = n // 2
+    span = (n - start - 8) // len(FAULT_KINDS)
+    specs = [FaultSpec(kind, start + i * span, span - 6, magnitude=1.0,
+                       channel=SENSOR_FAULT_TARGETS.get(kind, ('',))[0])
+             for i, kind in enumerate(FAULT_KINDS)]
+    batch = ingest_timeline(simulate_timeline(cfg, fault_specs=specs, turbine_id='WT-training'))
+    batch.meta.update(training_only=True, training_seed=seed,
+                      simulator='reference-explicit-training-scenarios')
+    return batch
+
+
+def without_labels(batch):
+    """Copy metadata only; inference must not have access to target annotations."""
+    from dataclasses import replace
+    return replace(batch, meta={k: v for k, v in batch.meta.items()
+                                if k not in ('fault_label', 'fault_kind_per_step', 'rul_target')})

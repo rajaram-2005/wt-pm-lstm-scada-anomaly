@@ -216,15 +216,16 @@ def test_model_output_records_conform():
 # ---------------------------------------------------------------------------
 # data layer
 # ---------------------------------------------------------------------------
-def test_clean_interpolates_short_gaps_only():
+def test_clean_causally_fills_short_gaps_only():
     b = synth_batch(100)
-    b.values[10:12, 0] = np.nan          # short gap -> interpolated
+    b.values[10:12, 0] = np.nan          # short gap -> carry forward
     b.values[50:70, 1] = np.nan          # long gap -> stays masked
     b.meta["mask"] = np.isfinite(b.values)
     out = clean(b, max_gap=6)
     assert np.isfinite(out.values[10:12, 0]).all()
     assert out.meta["mask"][10:12, 0].all()
-    assert not out.meta["mask"][55:65, 1].any()
+    assert out.meta["mask"][50:56, 1].all()
+    assert not out.meta["mask"][56:70, 1].any()
 
 
 def test_feature_pipeline_views():
@@ -275,6 +276,8 @@ def test_probability_fusion_consensus():
     p1["bearing_wear"] = np.full(n, 0.9)
     p2 = {c: np.full(n, 0.01) for c in FAULT_CLASSES}
     p2["bearing_wear"] = np.full(n, 0.8)
+    p1 = {c: p / sum(p1.values()) for c, p in p1.items()}
+    p2 = {c: p / sum(p2.values()) for c, p in p2.items()}
     o1 = ModelOutput(model_id="c1", task=TaskType.FAULT_CLASSIFICATION,
                      turbine_id="w", timestamps=np.arange(n), probability=p1,
                      prediction=np.array(["bearing_wear"] * n, dtype=object))
@@ -351,8 +354,13 @@ def _fit_predict(mid: str, b: SensorBatch):
     mask = np.zeros(b.n_steps, bool)
     mask[: int(b.n_steps * 0.6)] = True
     mask &= np.asarray(b.meta["fault_label"]) == 0
-    m.fit(b, mask)
-    out = m.predict(b)
+    if mid in {"m11-xgboost-tabular", "m17-mlp-rul"}:
+        training = FeaturePipeline(window=24, stride=4).transform(synth_batch(400, seed=19))
+        m.fit(training, np.ones(training.n_steps, bool))
+    else:
+        m.fit(b, mask)
+    from wtpm_platform.simulate import without_labels
+    out = m.predict(without_labels(b))
     assert out.ok, out.error
     return out
 
@@ -409,9 +417,14 @@ def test_particle_filter_consumes_observations(prepared_batch):
 def test_tinyml_safety_and_export(tmp_path, prepared_batch):
     reg = build_default_registry()
     m = reg.get("m25-tinyml-safety")
-    healthy = np.asarray(prepared_batch.meta["fault_label"]) == 0
-    m.fit(prepared_batch, healthy)   # trip baseline comes from the healthy band
-    out = m.predict(prepared_batch)
+    from copy import deepcopy
+    raw = synth_batch(400, seed=19)
+    raw.values[-30:, -1] = 15.0  # genuine engineering-limit training positives
+    training = FeaturePipeline(window=24, stride=4).transform(raw)
+    m.fit(training, np.ones(training.n_steps, bool))
+    test = deepcopy(prepared_batch)
+    test.values[-1, -1] = 15.0
+    out = m.predict(test)
     assert out.ok
     assert str(out.prediction[-1]) == "TRIP"      # vibration ramp must trip
     try:

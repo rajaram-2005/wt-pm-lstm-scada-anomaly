@@ -4,7 +4,8 @@ Each of the 25 wt-pm repositories is wrapped by exactly one adapter class
 implementing :class:`BaseWTModel`. The adapter:
 
 * imports the repository's *actual* code (from ``external/<repo>/model.py`` or
-  the installed ``wt_pm_lstm`` package) — it never re-implements the model;
+  the installed ``wt_pm_lstm`` package), or the same estimator family for
+  CSV-only training recipes; integration-specific losses/proxies are documented;
 * converts a platform :class:`SensorBatch` into the repo's expected input;
 * converts the repo's raw output into a :class:`ModelOutput`;
 * declares its capabilities so the ModelRouter can select it honestly.
@@ -15,6 +16,7 @@ box), the adapter reports itself unavailable instead of crashing the platform.
 
 from __future__ import annotations
 
+from functools import wraps
 import importlib.util
 import os
 import sys
@@ -42,16 +44,22 @@ def load_repo_module(repo: str, module_name: Optional[str] = None):
     This is how adapters call the original research code without modifying it
     and without the 24 identical ``model.py`` filenames colliding.
     """
-    path = os.path.join(EXTERNAL_DIR, repo, "model.py")
+    # Resolve at call time so installed wheels and configured deployments agree.
+    root = os.environ.get("WTPM_EXTERNAL_DIR", EXTERNAL_DIR)
+    path = os.path.join(root, repo, "model.py")
     if not os.path.exists(path):
         raise FileNotFoundError(f"{repo}: model.py not found at {path} (clone the repo into external/)")
     name = module_name or ("wtpm_ext_" + repo.replace("-", "_"))
-    if name in sys.modules:
+    if name in sys.modules and getattr(sys.modules[name], "__file__", None) == path:
         return sys.modules[name]
     spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     sys.modules[name] = mod
-    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    try:
+        spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    except Exception:
+        sys.modules.pop(name, None)
+        raise
     return mod
 
 
@@ -77,9 +85,23 @@ class BaseWTModel(ABC):
 
     spec: ModelSpec
 
+    def __init_subclass__(cls, **kwargs):
+        super().__init_subclass__(**kwargs)
+        fit = cls.__dict__.get("fit")
+        if fit is not None:
+            @wraps(fit)
+            def checked_fit(self, batch, train_mask):
+                from wtpm_platform.protocol import training_mask
+                mask = training_mask(batch, train_mask)
+                self._fitted = False
+                return fit(self, batch, mask)
+            cls.fit = checked_fit
+
     def __init__(self) -> None:
         self._fitted = False
         self._unavailable_reason = ""
+        self._fit_error = ""
+        self._fit_status = "not fitted"
 
     # -- capability ---------------------------------------------------------
     def available(self) -> bool:
@@ -103,7 +125,7 @@ class BaseWTModel(ABC):
     # -- lifecycle ------------------------------------------------------------
     @abstractmethod
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
-        """Train/calibrate on the healthy band of ``batch`` (rows where
+        """Train/calibrate only on the permitted rows of ``batch`` (rows where
         ``train_mask`` is True). Adapters that wrap non-trainable code
         (e.g. the particle filter) may no-op."""
 
@@ -121,7 +143,15 @@ class BaseWTModel(ABC):
             return ModelOutput.failed(mid, task, batch.turbine_id, "not fitted")
         try:
             with Stopwatch() as sw:
+                if batch.n_steps == 0 or not np.isfinite(batch.values).all():
+                    raise ValueError("empty or non-finite input batch")
+                from wtpm_platform.protocol import sample_hours, validate_output
+                sample_hours(batch)
                 out = self._predict(batch)
+                if out.ok and (out.turbine_id != batch.turbine_id or out.model_id != mid or
+                               not np.isin(out.timestamps, batch.timestamps).all()):
+                    raise ValueError("output must match model, turbine and input timestamp subset")
+                validate_output(out)
             out.inference_time_ms = sw.ms
             return out
         except Exception:  # noqa: BLE001
@@ -134,7 +164,11 @@ class BaseWTModel(ABC):
             "repository": self.spec.repository,
             "available": self.available(),
             "fitted": self._fitted,
-            "reason": self._unavailable_reason,
+            "reason": self._unavailable_reason or self._fit_error,
+            "fit_status": self._fit_status,
+            "fit_error": self._fit_error,
+            "training_rows": getattr(self, "_training_rows", None),
+            "notes": self.spec.notes,
         }
 
 

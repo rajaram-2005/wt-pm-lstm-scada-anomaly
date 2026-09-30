@@ -16,6 +16,17 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from wtpm_platform.contracts import ModelOutput, TaskType
+from wtpm_platform.protocol import validate_output
+
+def _aligned(outputs):
+    reference = outputs[0]
+    for out in outputs:
+        validate_output(out)
+        if out.turbine_id != reference.turbine_id or not np.array_equal(out.timestamps, reference.timestamps):
+            raise ValueError("fusion streams must match turbine and timestamps")
+    if len({o.model_id for o in outputs}) != len(outputs):
+        raise ValueError("duplicate fusion model IDs")
+
 
 
 @dataclass
@@ -49,23 +60,13 @@ class FusionEngine:
         cfg = self.cfg
         streams: Dict[str, np.ndarray] = {}
         uncertainties: Dict[str, np.ndarray] = {}
-        n = 0
-        for o in outputs:
-            if not o.ok or o.anomaly_score is None:
-                continue
-            n = max(n, len(o.anomaly_score))
-        for o in outputs:
-            if not o.ok or o.anomaly_score is None:
-                continue
-            s = np.asarray(o.anomaly_score, float)
-            if len(s) < n:               # left-pad shorter streams with first value
-                s = np.concatenate([np.full(n - len(s), s[0] if len(s) else 0.0), s])
-            streams[o.model_id] = s
-            if o.uncertainty is not None and len(o.uncertainty) == len(o.anomaly_score):
-                u = np.asarray(o.uncertainty, float)
-                if len(u) < n:
-                    u = np.concatenate([np.full(n - len(u), u[0] if len(u) else 0.0), u])
-                uncertainties[o.model_id] = u
+        valid = [o for o in outputs if o.ok and o.anomaly_score is not None]
+        if valid:
+            _aligned(valid)
+        for o in valid:
+            streams[o.model_id] = np.asarray(o.anomaly_score, float)
+            if o.uncertainty is not None:
+                uncertainties[o.model_id] = np.asarray(o.uncertainty, float)
         if len(streams) < cfg.min_models:
             raise RuntimeError(f"fusion needs >= {cfg.min_models} anomaly streams, got {len(streams)}")
 
@@ -81,13 +82,15 @@ class FusionEngine:
             eff = {i: 1.0 / len(ids) for i in ids}
         else:
             w = np.array([cfg.weights.get(i, 1.0) for i in ids], float)
+            if not np.isfinite(w).all() or np.any(w < 0) or w.sum() <= 0:
+                raise ValueError("fusion weights must be finite, nonnegative and have positive total")
             if cfg.method == "confidence_weighted":
                 # models reporting uncertainty get down-weighted where unsure
                 conf = np.ones_like(M)
                 for k, i in enumerate(ids):
                     if i in uncertainties:
                         u = uncertainties[i]
-                        conf[k] = 1.0 / (1.0 + u / (np.median(u) + 1e-9))
+                        conf[k] = 1.0 / (1.0 + u)
                 wm = w[:, None] * conf
                 fused = (M * wm).sum(axis=0) / (wm.sum(axis=0) + 1e-12)
             else:
@@ -97,8 +100,10 @@ class FusionEngine:
 
         # ---- temporal consensus (trailing mean over window) ----
         tw = max(cfg.temporal_window, 1)
-        kernel = np.ones(tw) / tw
-        smoothed = np.convolve(fused, kernel, mode="full")[:len(fused)]
+        sums = np.r_[0.0, np.cumsum(fused)]
+        ends = np.arange(1, len(fused) + 1)
+        starts = np.maximum(ends - tw, 0)
+        smoothed = (sums[ends] - sums[starts]) / (ends - starts)
 
         disagreement = M.std(axis=0)
         alarm = smoothed > cfg.alarm_threshold
@@ -133,7 +138,7 @@ class FusionEngine:
     def fuse_probabilities(
         self, outputs: Sequence[ModelOutput], classes: Sequence[str],
     ) -> Tuple[Dict[str, np.ndarray], np.ndarray, Dict[str, int]]:
-        """Bayesian product-of-experts where possible, weighted mean otherwise.
+        """Coverage-aware weighted probability mean; absent classes abstain.
 
         Returns (fused class->prob arrays, consensus labels, votes per class at
         the final step).
@@ -142,23 +147,30 @@ class FusionEngine:
         streams = [o for o in outputs if o.ok and o.probability]
         if not streams:
             raise RuntimeError("no probabilistic outputs to fuse")
-        n = max(len(o.timestamps) for o in streams)
-        logp = np.zeros((len(classes), n))
-        wsum = 0.0
+        _aligned(streams)
+        n = len(streams[0].timestamps)
+        # A specialist abstains on classes it does not emit. Missing classes
+        # must not receive log(1)=0 and defeat all actual negative log evidence.
+        evidence = np.zeros((len(classes), n))
+        coverage = np.zeros((len(classes), n))
         for o in streams:
             w = cfg.weights.get(o.model_id, 1.0)
-            wsum += w
+            if not np.isfinite(w) or w < 0:
+                raise ValueError("fusion weights must be finite and nonnegative")
             for ci, c in enumerate(classes):
                 p = o.probability.get(c)
                 if p is None:
                     continue
                 p = np.asarray(p, float)
-                if len(p) < n:
-                    p = np.concatenate([np.full(n - len(p), p[0] if len(p) else 0.0), p])
-                logp[ci] += w * np.log(np.clip(p, 1e-6, 1.0))   # Bayesian PoE
-        logp /= max(wsum, 1e-12)
-        P = np.exp(logp - logp.max(axis=0, keepdims=True))
-        P /= P.sum(axis=0, keepdims=True)
+                if len(p) != n:
+                    raise ValueError("classification streams must be timestamp aligned")
+                evidence[ci] += w * p
+                coverage[ci] += w
+        P = np.divide(evidence, coverage, out=np.zeros_like(evidence), where=coverage > 0)
+        mass = P.sum(axis=0, keepdims=True)
+        if np.any(mass <= 0):
+            raise ValueError("no class evidence with positive weight")
+        P /= mass
         fused = {c: P[ci] for ci, c in enumerate(classes)}
         consensus = np.array([classes[i] for i in P.argmax(axis=0)], dtype=object)
 
@@ -175,6 +187,9 @@ class FusionEngine:
     # ------------------------------------------------------------------
     def fuse_rul(self, outputs: Sequence[ModelOutput]) -> Tuple[np.ndarray, np.ndarray, Dict[str, float]]:
         """Inverse-variance weighting when uncertainty exists, else mean."""
+        valid = [o for o in outputs if o.ok and o.rul_hours is not None]
+        if valid:
+            _aligned(valid)
         streams = [(o.model_id, np.asarray(o.rul_hours, float),
                     None if o.uncertainty is None else np.asarray(o.uncertainty, float))
                    for o in outputs if o.ok and o.rul_hours is not None]
@@ -185,8 +200,6 @@ class FusionEngine:
         wtot = np.zeros(n)
         contrib: Dict[str, float] = {}
         for mid, r, u in streams:
-            if len(r) < n:
-                r = np.concatenate([np.full(n - len(r), r[0]), r])
             if u is not None and len(u) == len(r):
                 w = 1.0 / (u ** 2 + 1.0)
             else:
@@ -196,8 +209,7 @@ class FusionEngine:
             contrib[mid] = float(np.mean(w))
         est /= np.maximum(wtot, 1e-12)
         # spread across models as uncertainty proxy
-        R = np.vstack([np.concatenate([np.full(n - len(s[1]), s[1][0]), s[1]])
-                       if len(s[1]) < n else s[1] for s in streams])
+        R = np.vstack([s[1] for s in streams])
         spread = R.std(axis=0)
         tot = sum(contrib.values()) + 1e-12
         contrib = {k: v / tot for k, v in contrib.items()}

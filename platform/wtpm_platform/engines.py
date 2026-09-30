@@ -303,7 +303,7 @@ class SafetyManager:
     between a turbine and a burst bearing.
     """
 
-    HARD_LIMITS = {"bearing_vib_rms_mm_s": 12.0, "gearbox_oil_temp_c": 78.0}
+    HARD_LIMITS = {"bearing_vib_rms_mm_s": 12.0, "gearbox_oil_temp_c": 78.0, "rotor_speed_rpm": 25.0}
 
     def __init__(self, registry: ModelRegistry) -> None:
         self.registry = registry
@@ -312,6 +312,14 @@ class SafetyManager:
                  rul: Optional[ModelOutput]) -> Dict[str, Any]:
         decision = "CONTINUE"
         reasons: List[str] = []
+        # Missing/invalid safety telemetry must never authorize CONTINUE.
+        for ch in self.HARD_LIMITS:
+            idx = list(batch.channel_names).index(ch) if ch in batch.channel_names else None
+            quality = batch.meta.get("mask")
+            if (idx is None or not np.isfinite(batch.values[-1, idx]) or
+                    (quality is not None and not quality[-1, idx])):
+                decision = "INSPECT"
+                reasons.append(f"safety telemetry unavailable: {ch}; manual assessment required")
         # hard limits first
         for ch, lim in self.HARD_LIMITS.items():
             if ch in batch.channel_names and float(batch.channel(ch)[-1]) > lim:

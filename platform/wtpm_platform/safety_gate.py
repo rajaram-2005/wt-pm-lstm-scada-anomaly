@@ -8,9 +8,10 @@ the ESP32 safety relay, without hardware.
 from __future__ import annotations
 
 from typing import Any, Dict, Mapping, Optional
+import math
 
 
-# User-specified SIL-3-style bounds (software emulator, not a certified PLC).
+# Demonstration engineering bounds (software emulator, not a certified PLC).
 MAX_ROTOR_RPM = 25.0
 MIN_PITCH_DEG = 0.0
 MAX_PITCH_DEG = 90.0
@@ -21,6 +22,28 @@ def safety_gate_check(pitch_angle: Optional[float] = None,
                       rpm: Optional[float] = None,
                       vibration_mm_s: Optional[float] = None) -> Dict[str, Any]:
     reasons = []
+    values = {}
+    for name, value in (("pitch_angle", pitch_angle), ("rpm", rpm),
+                        ("vibration_mm_s", vibration_mm_s)):
+        if value is None:
+            values[name] = None
+            continue
+        try:
+            if isinstance(value, bool):
+                raise ValueError("boolean is not a sensor value")
+            value = float(value)
+            if not math.isfinite(value):
+                raise ValueError("non-finite value")
+            values[name] = value
+        except (TypeError, ValueError, OverflowError):
+            reasons.append(f"invalid {name}")
+            values[name] = None
+    pitch_angle, rpm, vibration_mm_s = (values[k] for k in
+                                      ("pitch_angle", "rpm", "vibration_mm_s"))
+    if rpm is not None and rpm < 0:
+        reasons.append("negative rpm")
+    if vibration_mm_s is not None and vibration_mm_s < 0:
+        reasons.append("negative vibration")
     if rpm is not None and rpm > MAX_ROTOR_RPM:
         reasons.append(f"rpm {rpm} > {MAX_ROTOR_RPM} (overspeed)")
     if pitch_angle is not None and pitch_angle < MIN_PITCH_DEG:
@@ -35,30 +58,27 @@ def safety_gate_check(pitch_angle: Optional[float] = None,
         "dropped": not ok,
         "reasons": reasons,
         "message": ("CRITICAL: Command dropped. Hard limit exceeded."
-                    if reasons else "Command passed to SCADA"),
+                    if reasons else "Software check passed; no SCADA write performed"),
     }
 
 
 def gate_command(cmd: Mapping[str, Any]) -> Dict[str, Any]:
     """Passthrough dict if limits hold; else drop with reasons."""
-    check = safety_gate_check(
-        pitch_angle=_num(cmd.get("pitch_angle") or cmd.get("pitch_angle_deg")),
-        rpm=_num(cmd.get("rpm") or cmd.get("rotor_speed_rpm")),
-        vibration_mm_s=_num(cmd.get("vibration") or cmd.get("bearing_vib_rms_mm_s")),
-    )
-    out = dict(cmd)
-    out["sil"] = check
-    if check["dropped"]:
-        out["forwarded"] = False
-    else:
-        out["forwarded"] = True
-    return out
-
-
-def _num(v: Any) -> Optional[float]:
-    if v is None or v == "":
-        return None
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return None
+    # Check every supplied alias: zero is a value, and conflicting aliases may
+    # never conceal an unsafe input. This function does not control hardware.
+    aliases = {"pitch_angle": "pitch_angle", "pitch_angle_deg": "pitch_angle",
+               "rpm": "rpm", "rotor_speed_rpm": "rpm",
+               "vibration": "vibration_mm_s", "bearing_vib_rms_mm_s": "vibration_mm_s"}
+    reasons = []
+    supplied = [(key, arg) for key, arg in aliases.items() if key in cmd]
+    if not supplied:
+        reasons.append("no recognized safety parameters")
+    for key, arg in supplied:
+        if cmd[key] is None:
+            reasons.append(f"invalid {key}")
+        else:
+            reasons.extend(safety_gate_check(**{arg: cmd[key]})["reasons"])
+    check = {"ok": not reasons, "dropped": bool(reasons), "reasons": reasons,
+             "message": ("CRITICAL: Command dropped. Invalid input or hard limit exceeded."
+                         if reasons else "Software check passed; no SCADA write performed")}
+    return {**cmd, "sil": check, "forwarded": not reasons}

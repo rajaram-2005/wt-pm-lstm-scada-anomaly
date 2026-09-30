@@ -16,23 +16,40 @@ the healthy calibration band so the FusionEngine can combine them).
 from __future__ import annotations
 
 from typing import Optional
+from dataclasses import dataclass
 
 import numpy as np
 
 from wtpm_platform.base import BaseWTModel, ModelSpec, load_repo_module
 from wtpm_platform.contracts import Deployment, ModelOutput, SensorBatch, Subsystem, TaskType
 from wtpm_platform.data import RESPONSE_CHANNELS
+from wtpm_platform.protocol import training_mask, window_training_mask
+
+
+@dataclass(frozen=True)
+class RobustCalibration:
+    center: float
+    scale: float
+
+    def __call__(self, scores):
+        return (scores - self.center) / self.scale
 
 
 def robust_calibrate(scores_train: np.ndarray):
+    scores_train = np.asarray(scores_train, float)
+    if not scores_train.size or not np.isfinite(scores_train).all():
+        raise ValueError("calibration requires finite training scores")
     med = float(np.median(scores_train))
     mad = float(np.median(np.abs(scores_train - med))) * 1.4826 + 1e-9
-    return lambda s: (s - med) / mad
+    return RobustCalibration(med, mad)
 
 
 def _standardiser(x_train: np.ndarray):
+    if not x_train.size or not np.isfinite(x_train).all():
+        raise ValueError("standardisation requires finite training samples")
     mu = x_train.mean(axis=0)
-    sd = x_train.std(axis=0) + 1e-9
+    sd = x_train.std(axis=0)
+    sd = np.where(sd < 1e-6, 1.0, sd)
     return lambda x: (x - mu) / sd
 
 
@@ -64,18 +81,23 @@ class LSTMScadaAnomaly(BaseWTModel):
         cfg = RunConfig()
         cfg.model.epochs = int(batch.meta.get("m05_epochs", 8))
         cfg.model.n_ensemble = 2
-        n_steps = batch.n_steps
-        cfg.data.n_days = n_steps * cfg.data.sample_minutes / (24 * 60)
-        # platform records inject faults from 55% onward: keep train+calibration
-        # strictly inside the healthy prefix (fit_detector refuses otherwise)
-        cfg.data.healthy_fraction = 0.40
-        cfg.data.calibration_fraction = 0.12
+        mask = training_mask(batch, train_mask)
+        labels = batch.meta.get("fault_label")
+        if labels is not None and np.any(np.asarray(labels)[mask]):
+            raise ValueError("LSTM healthy training mask includes faults")
+        # Keep temporal spacing: never concatenate disjoint healthy intervals.
+        ids = np.flatnonzero(mask)
+        runs = np.split(ids, np.where(np.diff(ids) != 1)[0] + 1)
+        selected = max(runs, key=len)
+        cfg.data.n_days = len(selected) * cfg.data.sample_minutes / (24 * 60)
+        cfg.data.healthy_fraction = 0.65
+        cfg.data.calibration_fraction = 0.25
         timeline = TurbineTimeline(
             turbine_id=batch.turbine_id,
             channel_names=tuple(batch.channel_names),
-            values=batch.values,
-            timestamps=batch.timestamps,
-            fault_label=batch.meta.get("fault_label"),
+            values=batch.values[selected],
+            timestamps=batch.timestamps[selected],
+            fault_label=np.zeros(len(selected), dtype=int),
         )
         self._detector, _, _ = fit_detector(cfg, timeline)
         self._fitted = True
@@ -97,11 +119,11 @@ class LSTMScadaAnomaly(BaseWTModel):
             unc = np.zeros_like(score)
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
-            turbine_id=batch.turbine_id, timestamps=batch.timestamps[-len(score):],
+            turbine_id=batch.turbine_id, timestamps=res.timestamps,
             # rescale so "at threshold" == 3.0, matching the robust-z scale
             # the other anomaly adapters emit (fusion compares like with like)
             anomaly_score=3.0 * score / max(thr, 1e-9),
-            uncertainty=unc,
+            uncertainty=3.0 * unc / max(thr, 1e-9),
             explanation=f"fused LSTM/NBM/trend score (3.0 == calibrated threshold {thr:.2f})",
             extra={"threshold": thr, "raw": res},
         )
@@ -132,7 +154,7 @@ class GRUScadaTelemetry(BaseWTModel):
         mod = load_repo_module("wt-pm-gru-scada-telemetry")
         W = batch.windows
         ends = batch.window_index
-        keep = train_mask[ends]
+        keep = window_training_mask(batch, train_mask)
         X = W[keep]
         self._std = _standardiser(X.reshape(-1, X.shape[-1]))
         Xs = self._std(X)
@@ -147,6 +169,7 @@ class GRUScadaTelemetry(BaseWTModel):
             loss = lossf(model(xb), yb)
             loss.backward()
             opt.step()
+        model.eval()
         self._model = model
         with torch.no_grad():
             err = ((model(xb) - yb) ** 2).mean(dim=1).numpy()
@@ -198,28 +221,24 @@ class TCNPowerCurve(BaseWTModel):
         mod = load_repo_module("wt-pm-tcn-power-curve")
         W, ends = batch.windows, batch.window_index
         p_idx = list(batch.channel_names).index("power_kw")
-        keep = train_mask[ends]
+        keep = window_training_mask(batch, train_mask)
         X = W[keep]
         self._std = _standardiser(X.reshape(-1, X.shape[-1]))
         Xs = self._std(X)
-        xb = torch.tensor(Xs[:, :-1, :], dtype=torch.float32).transpose(1, 2)  # (N,C,T)
+        xb = torch.tensor(Xs[:, :-1, :], dtype=torch.float32)
         yb = torch.tensor(Xs[:, -1, p_idx], dtype=torch.float32)
         model = mod.TCNPowerCurve(input_size=X.shape[-1], num_channels=[16, 16])
-        # repo's forward returns (N, C_out, T); take last step -> linear head
-        head = torch.nn.Linear(16, 1)
-        params = list(model.parameters()) + list(head.parameters())
-        opt = torch.optim.Adam(params, lr=3e-3)
+        opt = torch.optim.Adam(model.parameters(), lr=3e-3)
         model.train()
         for _ in range(25):
             opt.zero_grad()
-            feat = model.network(xb)[:, :, -1] if hasattr(model, "network") else model(xb)[:, :, -1]
-            loss = torch.nn.functional.mse_loss(head(feat).squeeze(-1), yb)
+            loss = torch.nn.functional.mse_loss(model(xb).squeeze(-1), yb)
             loss.backward()
             opt.step()
-        self._model, self._head, self._p_idx = model, head, p_idx
+        model.eval()
+        self._model, self._p_idx = model, p_idx
         with torch.no_grad():
-            feat = model.network(xb)[:, :, -1] if hasattr(model, "network") else model(xb)[:, :, -1]
-            err = np.abs(head(feat).squeeze(-1).numpy() - yb.numpy())
+            err = np.abs(model(xb).squeeze(-1).numpy() - yb.numpy())
         self._cal = robust_calibrate(err)
         self._fitted = True
 
@@ -227,11 +246,10 @@ class TCNPowerCurve(BaseWTModel):
         import torch
         W, ends = batch.windows, batch.window_index
         Xs = self._std(W)
-        xb = torch.tensor(Xs[:, :-1, :], dtype=torch.float32).transpose(1, 2)
+        xb = torch.tensor(Xs[:, :-1, :], dtype=torch.float32)
         with torch.no_grad():
-            m = self._model
-            feat = m.network(xb)[:, :, -1] if hasattr(m, "network") else m(xb)[:, :, -1]
-            pred = self._head(feat).squeeze(-1).numpy()
+            self._model.eval()
+            pred = self._model(xb).squeeze(-1).numpy()
         err = np.abs(pred - Xs[:, -1, self._p_idx])
         z = self._cal(err)
         score = _to_steps(z, ends, batch.n_steps)
@@ -239,6 +257,7 @@ class TCNPowerCurve(BaseWTModel):
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
             anomaly_score=score, subsystem=Subsystem.ROTOR_BLADES,
+            extra={"forecast_standardized": pred, "window_index": ends},
             explanation="TCN power-curve residual (robust z)",
         )
 
@@ -279,6 +298,7 @@ class DeepSVDDBoundary(BaseWTModel):
             loss = mod.svdd_loss(model(Xs), model.c)   # repo's own loss
             loss.backward()
             opt.step()
+        model.eval()
         self._model = model
         with torch.no_grad():
             d = ((model(Xs) - model.c) ** 2).sum(dim=1).numpy()
@@ -374,9 +394,11 @@ class VAEReconstruction(BaseWTModel):
             loss = mod.vae_loss(recon, Xs, mu, logvar) / len(Xs)  # repo's loss
             loss.backward()
             opt.step()
+        model.eval()
         self._model = model
         with torch.no_grad():
-            recon, mu, logvar = model(Xs)
+            mu, logvar = model.encode(Xs)
+            recon = model.decode(mu)
             err = ((recon - Xs) ** 2).mean(dim=1).numpy()
         self._cal = robust_calibrate(err)
         self._fitted = True
@@ -385,14 +407,17 @@ class VAEReconstruction(BaseWTModel):
         import torch
         Xs = torch.tensor(self._std(batch.features), dtype=torch.float32)
         with torch.no_grad():
-            recon, mu, logvar = self._model(Xs)
+            self._model.eval()
+            mu, logvar = self._model.encode(Xs)
+            recon = self._model.decode(mu)
             err = ((recon - Xs) ** 2).mean(dim=1).numpy()
             unc = logvar.exp().mean(dim=1).sqrt().numpy()
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            anomaly_score=self._cal(err), uncertainty=unc,
-            explanation="VAE reconstruction error (robust z)",
+            anomaly_score=self._cal(err),
+            extra={"latent_std": unc},
+            explanation="VAE posterior-mean reconstruction error (robust z); latent_std is not calibrated score uncertainty",
         )
 
 
@@ -401,11 +426,7 @@ def _to_steps(window_scores: np.ndarray, ends: np.ndarray, n_steps: int) -> np.n
     out = np.zeros(n_steps)
     if len(ends) == 0:
         return out
-    j = 0
-    cur = window_scores[0]
-    for t in range(n_steps):
-        while j < len(ends) - 1 and ends[j + 1] <= t:
-            j += 1
-            cur = window_scores[j]
-        out[t] = cur if t >= ends[0] else window_scores[0]
+    positions = np.searchsorted(ends, np.arange(n_steps), side="right") - 1
+    valid = positions >= 0
+    out[valid] = np.asarray(window_scores)[positions[valid]]
     return out

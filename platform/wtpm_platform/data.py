@@ -91,33 +91,25 @@ def ingest_arrays(
 # Cleaning / synchronization
 # ---------------------------------------------------------------------------
 def clean(batch: SensorBatch, max_gap: int = 6) -> SensorBatch:
-    """Interpolate short gaps, flag long ones; never invent a sentinel value.
+    """Causally forward-fill short gaps and flag unavailable/long gaps.
 
     Rows whose gap exceeds ``max_gap`` samples stay masked; downstream
     consumers receive the mask and must not score masked rows.
     """
     v = batch.values.copy()
-    mask = batch.meta.get("mask", np.isfinite(v)).copy()
+    mask = np.asarray(batch.meta.get("mask", np.isfinite(v)), bool).copy()
     mask &= np.isfinite(v)
+    # Causal carry-forward only. Never interpolate from a future observation.
     for c in range(v.shape[1]):
-        col, m = v[:, c], mask[:, c]
-        if m.all():
-            continue
-        idx = np.arange(len(col))
-        good = idx[m]
-        if len(good) < 2:
-            continue
-        holes = idx[~m]
-        v[holes, c] = np.interp(holes, good, col[good])
-        # re-mask holes that sit inside gaps longer than max_gap
-        gap_starts = np.where(np.diff(good) > max_gap)[0]
-        for g in gap_starts:
-            lo, hi = good[g], good[g + 1]
-            mask[lo + 1:hi, c] = False
-        # otherwise the interpolation is accepted
-        short = np.setdiff1d(holes, np.concatenate([np.arange(good[g] + 1, good[g + 1])
-                                                    for g in gap_starts]) if len(gap_starts) else [])
-        mask[short, c] = True
+        last, gap = 0.0, 0
+        seen = False
+        for i in range(len(v)):
+            if mask[i, c]:
+                last, gap, seen = v[i, c], 0, True
+            else:
+                gap += 1
+                v[i, c] = last
+                mask[i, c] = seen and gap <= max_gap
     out = SensorBatch(
         turbine_id=batch.turbine_id, timestamps=batch.timestamps,
         channel_names=batch.channel_names, values=v,
@@ -135,7 +127,10 @@ def operating_state(batch: SensorBatch) -> np.ndarray:
     state = np.full(n, 3, dtype=int)
     if ws is None or pw is None:
         return state
-    rated = np.nanpercentile(pw, 97)
+    # Use the turbine rating, not a percentile of this (possibly future) record.
+    rated = float(batch.meta.get("rated_power_kw", 2000.0))
+    if not np.isfinite(rated) or rated <= 0:
+        raise ValueError("rated_power_kw must be finite and positive")
     state[(ws < 3.5) | (pw < 0.02 * max(rated, 1e-9))] = 0
     state[(pw >= 0.02 * rated) & (pw < 0.85 * rated)] = 1
     state[pw >= 0.85 * rated] = 2
@@ -164,14 +159,21 @@ class FeaturePipeline:
 
     def transform(self, batch: SensorBatch) -> SensorBatch:
         t0 = time.perf_counter()
+        waves, wave_index = batch.vib_waveforms, batch.vib_index
+        was_surrogate = bool(batch.meta.get("vibration_is_surrogate", False))
         batch = clean(batch)
         batch.operating_state = operating_state(batch)
         feats, names = self._tabular(batch)
         batch.features, batch.feature_names = feats, names
         batch.windows, batch.window_index = self._windows(batch)
-        batch.vib_waveforms, batch.vib_index = self._vibration_surrogate(batch)
+        if waves is not None:
+            if wave_index is None or len(waves) != len(wave_index):
+                raise ValueError("waveforms require aligned sample indices")
+            batch.vib_waveforms, batch.vib_index = waves, wave_index
+        else:
+            batch.vib_waveforms, batch.vib_index = self._vibration_surrogate(batch)
         batch.meta["feature_pipeline_ms"] = (time.perf_counter() - t0) * 1000
-        batch.meta["vibration_is_surrogate"] = True
+        batch.meta["vibration_is_surrogate"] = waves is None or was_surrogate
         return batch
 
     # -- tabular ------------------------------------------------------------
@@ -201,10 +203,10 @@ class FeaturePipeline:
     def _windows(self, batch: SensorBatch) -> Tuple[np.ndarray, np.ndarray]:
         W, S = self.window, self.stride
         T = batch.n_steps
-        if T < W + 1:
+        if T < W:
             return np.zeros((0, W, batch.values.shape[1])), np.zeros(0, int)
-        ends = np.arange(W, T, S)
-        wins = np.stack([batch.values[e - W:e] for e in ends])
+        ends = np.arange(W - 1, T, S)
+        wins = np.stack([batch.values[e - W + 1:e + 1] for e in ends])
         return wins, ends
 
     # -- vibration surrogate --------------------------------------------------
@@ -218,7 +220,7 @@ class FeaturePipeline:
         rng = np.random.default_rng(1234)
         t = np.arange(L) / L
         waves = np.empty((len(idx), L), dtype=np.float32)
-        healthy_rms = np.nanpercentile(rms, 30)
+        healthy_rms = 2.0  # fixed demo engineering reference; never fit on future data
         for j, i in enumerate(idx):
             f_rot = max(rpm[i], 1.0) / 60.0 * 64.0     # rotations per waveform
             base = np.sin(2 * np.pi * f_rot * t) + 0.4 * np.sin(2 * np.pi * 3.2 * f_rot * t)
@@ -232,10 +234,11 @@ class FeaturePipeline:
 
 
 def _rolling_mean(x: np.ndarray, w: int) -> np.ndarray:
-    c = np.cumsum(np.insert(np.nan_to_num(x, nan=0.0), 0, 0.0))
-    out = (c[w:] - c[:-w]) / w                       # length: len(x) - w + 1
-    pad = len(x) - len(out)
-    return np.concatenate([np.full(pad, out[0] if len(out) else 0.0), out])
+    x = np.asarray(x, float)
+    c = np.r_[0.0, np.cumsum(np.nan_to_num(x, nan=0.0))]
+    ends = np.arange(1, len(x) + 1)
+    starts = np.maximum(ends - w, 0)
+    return (c[ends] - c[starts]) / (ends - starts)
 
 
 def _rolling_std(x: np.ndarray, w: int) -> np.ndarray:

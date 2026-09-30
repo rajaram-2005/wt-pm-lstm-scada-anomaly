@@ -72,7 +72,7 @@
       <span>25 models · one CLI · one writeback</span>
     </nav>
     <div class="copy">
-      <div class="kicker">Product launch</div>
+      <div class="kicker">Research platform · GitHub Pages</div>
       <h1>Twenty-five specialists.<br /><span>One product.</span></h1>
       <p class="lede">
         LSTM, GRU, VAE, Deep SVDD, isolation forest, TCN, Informer, CNN, GNN,
@@ -80,9 +80,16 @@
         <b>WTPM.ALARM / SCORE / RUL_H</b>. Not twenty-five dashboards.
       </p>
       <div class="cta">
-        <a class="btn" href="#stack">See the stack</a>
-        <a class="btn ghost" href="#models">All 25 models</a>
+        <a class="btn" href="https://wt-pm-command-center.onrender.com/">Open dashboard on Render ↗</a>
+        <a class="btn ghost" href="ecosystem.html">Explore the 25-model architecture</a>
+        <a class="btn ghost" href="pitch.html">View the pitch</a>
       </div>
+      <p style="color:var(--muted);max-width:42rem">
+        This is the static project website. Python model training and inference
+        run on the separate Render service, not on GitHub Pages. A model listed
+        here is not necessarily available or fitted on that service.
+        <a href="https://wt-pm-command-center.onrender.com/health">Check runtime model health ↗</a>
+      </p>
     </div>
   </header>
 
@@ -134,6 +141,11 @@ wt-pm inspect
 wt-pm scada --demo
 wt-pm sil --rpm 26.5 --pitch 5</pre>
   </section>
-  <footer>WT-PM · rajaram-2005 · launch photos are generated product art, not a live plant.</footer>
+  <footer>
+    WT-PM · research demo, not field-validated turbine control.
+    Launch photos are generated product art, not a live plant.<br />
+    <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Source code</a> ·
+    <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/arena/01a0cc04-wt-pm-lstm-scada-anomaly/docs/deploy-render.md">Run the full Python stack</a>
+  </footer>
 </body>
 </html>

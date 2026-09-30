@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "owner": "rajaram-2005",
+  "models": [
+    {
+      "repository": "wt-pm-1d-cnn-bearing-vibration",
+      "revision": "de745130a4437947bb7634717646fed6c8cf1429",
+      "model_sha256": "e70a815a19ae5448e1d495713f640158fedc176e61e82debf04d5b9d1d83e78b"
+    },
+    {
+      "repository": "wt-pm-aerozip-autoencoder-compressor",
+      "revision": "4e52239afc8815b082f40511d5d3b4779507f8ae",
+      "model_sha256": "896761f19841c3dc88b86931e9c2cbe5f2423689431b47b67223839407392248"
+    },
+    {
+      "repository": "wt-pm-contrastive-ssl-vibration",
+      "revision": "8cbab8b524be1b7c3a6ccd776e51dbbc46662d27",
+      "model_sha256": "4409cf87ebb1e959d751954593915411a7f8263833136f776dc8d2e8d1b13153"
+    },
+    {
+      "repository": "wt-pm-convlstm-wear-prognostics",
+      "revision": "ca64904fbfb4edcdaf102aaa06c18005b60828c1",
+      "model_sha256": "89688479d92964e031bc1dd939360da7a3d9f24f49a323399557ec373aa43396"
+    },
+    {
+      "repository": "wt-pm-dbn-feature-extraction",
+      "revision": "67b3ffae882a4b42fe5ecee7a41c8b97617cbef1",
+      "model_sha256": "70e6640e55c16b0a44b215528d1d087f82db93793c5e0a06371898fb596575d7"
+    },
+    {
+      "repository": "wt-pm-deep-svdd-boundary",
+      "revision": "a2aa793035e1480e99ff56a880cd11a14978b7ba",
+      "model_sha256": "77df465525d3041b0025cacc614b1aacf9e87a5ea2222b9586cb93f036f53837"
+    },
+    {
+      "repository": "wt-pm-digital-twin-surrogate",
+      "revision": "2503c0abea39f4d8eced7241454108b5c55b15a7",
+      "model_sha256": "f792f3bb2b735a4d80c9338ec355d72b8e45ddd361913b31c9dcd9c70aba0bd4"
+    },
+    {
+      "repository": "wt-pm-gnn-turbines-cascade",
+      "revision": "e7584ff28c806134e04f3d9bf347cc6be4460bba",
+      "model_sha256": "454604777b0e81c3fae114b12c13a8774966a938652a35c76470b81ab971d6b9"
+    },
+    {
+      "repository": "wt-pm-gru-scada-telemetry",
+      "revision": "5304cb41b71ef7e93b4e1a7672c2e10a8753553f",
+      "model_sha256": "d9d4effb34f4d192c19a49c7a090efeb8979c2136b7b403e605200465f15ffb3"
+    },
+    {
+      "repository": "wt-pm-hmm-degradation-states",
+      "revision": "04e3a190279bf365eb0e323847c97db5acb86f33",
+      "model_sha256": "006d7d55bb39f5fb9cf59bb895ab2861bd58bfed402f0dded21f756ea66c50af"
+    },
+    {
+      "repository": "wt-pm-informer-long-sequence",
+      "revision": "c75bc32187f8d99ad67ec47db85c7edef4a3fe2a",
+      "model_sha256": "a0a30ab8d13db9a488b3a5ed777e3c11cec8138c5d2060752a1099e813df171d"
+    },
+    {
+      "repository": "wt-pm-isolation-forest-telemetry",
+      "revision": "9254b90da71c6278dfd470de1ff362abda6b6e40",
+      "model_sha256": "d5350cfc510256c9717686561d55fefc0830785d8a494748071aab4580fe5dc5"
+    },
+    {
+      "repository": "wt-pm-mlp-rul-regression",
+      "revision": "d3b718a1869a4a2427114bf3fa149fbad317412f",
+      "model_sha256": "6a0b66da4d301ae2f34e0158aa8847bc7f268f62d8c02b61e152987c88a005a4"
+    },
+    {
+      "repository": "wt-pm-particle-filter-rul",
+      "revision": "d74b049745398d46d7439d45dd0da3798e31979a",
+      "model_sha256": "c95d2538775cec313f757e066861f26916b7457b36a0bea73aa2ccd23ba3ee6a"
+    },
+    {
+      "repository": "wt-pm-pg-bnn-wind-turbine",
+      "revision": "54452c4202f3256fda325fda3fd6d7210a578b0b",
+      "model_sha256": "c92dca5b82bf12368310e545357d6f4bc0964f9771e38d01b8915dd8732ca414"
+    },
+    {
+      "repository": "wt-pm-quantized-mobilenet-edge",
+      "revision": "d310479dfe93cccbb92364d3d734ad3823fd77fc",
+      "model_sha256": "59bc8e19a42a36fe83ae65127b7951c23ac1e41ae25c9c27263120d2f93e6c05"
+    },
+    {
+      "repository": "wt-pm-random-forest-telemetry",
+      "revision": "8c70812ff363aad524ba20c96c29bb4aa92d8546",
+      "model_sha256": "ff1823896dbb6b5ade6365ce48f50620d9414640d08f8b677a1a635348fd9049"
+    },
+    {
+      "repository": "wt-pm-snn-event-vibration",
+      "revision": "b7e027cc2224c2d815a8f43b62e7655574104f65",
+      "model_sha256": "7499c13420266349058885dd0161285b5af1cffc26075bdfde6aaf3a67b6ff27"
+    },
+    {
+      "repository": "wt-pm-svm-rbf-generator-stator",
+      "revision": "7f57e4a3f188702ef24a5c5f8a0ae3ec0ebc48ec",
+      "model_sha256": "0200caf3ecac5f93107e2de13af9da34ebd2038f70dfae698b2bafa37b485cc2"
+    },
+    {
+      "repository": "wt-pm-tcn-power-curve",
+      "revision": "1620c8631b0931208a113717d05b8df566554f5a",
+      "model_sha256": "adf17b4dd83c1eb59b885a2740d48405f551e512bacf644c0acedd091e4380ed"
+    },
+    {
+      "repository": "wt-pm-tinyml-esp32-safety-relay",
+      "revision": "565819037f7fd3677211a58abc716664f96257a2",
+      "model_sha256": "fb8d7e3a4139c934ac95bba3e6506c8296893d8db71b1d28b6102bb648f165c5"
+    },
+    {
+      "repository": "wt-pm-vae-reconstruction-loss",
+      "revision": "4a33380bc02bc732027ede99e82e9edd860108db",
+      "model_sha256": "321573d090cdf619588969ae6e3dfca34e6790cf6d1c51bfc3a16bb5c1f697fa"
+    },
+    {
+      "repository": "wt-pm-xai-shap-interpretable",
+      "revision": "01ca29f4528c78f9deaa4296de1df12ed21e7b40",
+      "model_sha256": "d3eda7d0e4d5f160dbf86fb49fa0f54003777df8c871db0bf69dd316e44fc1b2"
+    },
+    {
+      "repository": "wt-pm-xgboost-tabular-faults",
+      "revision": "7030ec2c6baafe093d1a947152721f6cd6fab50a",
+      "model_sha256": "7e34a1a6c59542cdbdd68c6cd45b898e0549056b7cf073a8bec7f663b1a27ab1"
+    }
+  ]
+}
