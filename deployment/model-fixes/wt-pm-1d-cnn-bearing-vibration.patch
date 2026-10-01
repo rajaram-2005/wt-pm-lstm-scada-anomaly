@@ -1,0 +1,38 @@
+From 6d6e854c7ff1a63658600fd7a51400e695917f0f Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 12:33:59 +0000
+Subject: [PATCH] Fix landing page: correct platform card and GitHub link
+
+- docs/index.html and root index.html now show the m01-1dcnn-bearing
+  adapter id, 'integrated (surrogate waveforms)' status, full files list,
+  and a working 'View on GitHub' link instead of the placeholder '#'.
+---
+ docs/index.html | 2 +-
+ index.html      | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/docs/index.html b/docs/index.html
+index b612190..d17224c 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -37,4 +37,4 @@
+     <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture only — no trained weights or field datasets ship here. Platform metrics come from simulator records with surrogate vibration waveforms.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index b612190..d17224c 100644
+--- a/index.html
++++ b/index.html
+@@ -37,4 +37,4 @@
+     <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture only — no trained weights or field datasets ship here. Platform metrics come from simulator records with surrogate vibration waveforms.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+

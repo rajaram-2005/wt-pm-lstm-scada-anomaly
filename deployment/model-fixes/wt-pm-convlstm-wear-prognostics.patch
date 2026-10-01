@@ -1,0 +1,63 @@
+From e4b44f0566560216d25b877ec750bfddf7dd0e7f Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 12:34:17 +0000
+Subject: [PATCH] Fix landing page: add m02-convlstm-wear platform card +
+ GitHub link
+
+- Root and docs/ landing pages were missing the platform-info grid and
+  had a placeholder '#' GitHub-Pages link. Restored the full card
+  (adapter, status, files, dependencies) matching the other models.
+---
+ docs/index.html | 10 ++++++----
+ index.html      | 10 ++++++----
+ 2 files changed, 12 insertions(+), 8 deletions(-)
+
+diff --git a/docs/index.html b/docs/index.html
+index dcc721c..1a01deb 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>tensorflow numpy pandas</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m02-convlstm-wear</code></div>
++        <div><strong>Status</strong><br>integrated (4-layer stack + RUL demo)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Model 4 ships a 4-layer ConvLSTM with synthesized accelerated-wear trajectories and a train/eval demo; metrics on synthetic wear maps only.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index dcc721c..1a01deb 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>tensorflow numpy pandas</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m02-convlstm-wear</code></div>
++        <div><strong>Status</strong><br>integrated (4-layer stack + RUL demo)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Model 4 ships a 4-layer ConvLSTM with synthesized accelerated-wear trajectories and a train/eval demo; metrics on synthetic wear maps only.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+
