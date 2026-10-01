@@ -1,0 +1,5 @@
+# Files that must execute on Unix (bash scripts) or be consumed verbatim
+# by git am (patches): force LF in the working tree on every checkout,
+# regardless of the user's core.autocrlf setting (fixes Windows checkouts).
+*.sh    text eol=lf
+*.patch text eol=lf
