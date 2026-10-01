@@ -1,0 +1,45 @@
+From 198ffbebaca093cfe203badacc4808507a1f6ca6 Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 12:34:17 +0000
+Subject: [PATCH] Fix landing page: m23-aerozip card + GitHub link
+
+- Root and docs/ landing pages now show the correct platform adapter id,
+  status, file list, and a working View-on-GitHub button.
+---
+ docs/index.html | 4 ++--
+ index.html      | 4 ++--
+ 2 files changed, 4 insertions(+), 4 deletions(-)
+
+diff --git a/docs/index.html b/docs/index.html
+index 5bf3f74..aa1f5aa 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -34,7 +34,7 @@
+       </div>
+       <a class="btn" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture only — no trained weights or field datasets ship here. Compression ratio is latent bottleneck width vs input feature count; platform runs use simulator records.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture and compression-ratio helper only — no packet serializer, training loop or trained weights ship here.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index 5bf3f74..aa1f5aa 100644
+--- a/index.html
++++ b/index.html
+@@ -34,7 +34,7 @@
+       </div>
+       <a class="btn" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture only — no trained weights or field datasets ship here. Compression ratio is latent bottleneck width vs input feature count; platform runs use simulator records.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture and compression-ratio helper only — no packet serializer, training loop or trained weights ship here.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+

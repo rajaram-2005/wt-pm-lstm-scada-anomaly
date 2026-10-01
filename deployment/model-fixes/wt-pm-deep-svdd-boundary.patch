@@ -1,0 +1,1339 @@
+From ae0408df04e1669e2558032c8d76f804c017e25d Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 12:34:39 +0000
+Subject: [PATCH] Model 6: upgrade to 6-layer bias-free Deep SVDD with full
+ pipeline
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Replaces the 29-line 3-layer scaffold stub with the full Model 6
+implementation that was previously staged (but never applied) inside
+wt-pm-dbn-feature-extraction:
+
+- model.py: 6-layer bias-free encoder (Linear 64→128→96→64→48→32→rep_dim,
+  LeakyReLU 0.1, Kaiming init), init_center, svdd_loss, anomaly_score,
+  train_svdd, plus a 24-turbine synthetic farm (16 physical channels,
+  6 incipient fault types, chronological split), ZCA whitening, fixed
+  20-epoch Adam training, 99th-percentile threshold with 3-hour
+  persistence alarm rule, per-fault delay reporting, and comparisons
+  against the original scaffold and Mahalanobis baseline.
+- requirements.txt: reduced to torch, numpy (scikit-learn was unused).
+- results/model6_metrics.json: seed-42 metrics (AUROC 0.865, F1 0.718,
+  12/12 events detected, median delay 65.5 h).
+- results/model6_seed_sweep.json: six-seed sweep showing Model 6 leads
+  the scaffold and Mahalanobis on AUROC (0.885±0.016), F1 (0.782±0.038),
+  events detected (68/72) and median delay (56.5 h).
+- README.md: full model description, structure, setup, results table,
+  platform contract, honest limits.
+- index.html, docs/index.html: updated landing page with m13-deep-svdd
+  adapter card and working View-on-GitHub link.
+
+API surface for the wt-pm platform adapter is preserved:
+DeepSVDDNetwork(input_dim, rep_dim), init_center(model, [(X,)]),
+svdd_loss(model(X), model.c).
+---
+ README.md                      |  95 ++++--
+ docs/index.html                |  12 +-
+ index.html                     |  12 +-
+ model.py                       | 553 ++++++++++++++++++++++++++++++++-
+ requirements.txt               |   1 -
+ results/model6_metrics.json    | 449 ++++++++++++++++++++++++++
+ results/model6_seed_sweep.json |  43 +++
+ 7 files changed, 1117 insertions(+), 48 deletions(-)
+ create mode 100644 results/model6_metrics.json
+ create mode 100644 results/model6_seed_sweep.json
+
+diff --git a/README.md b/README.md
+index b88ff68..e5eb688 100644
+--- a/README.md
++++ b/README.md
+@@ -1,27 +1,40 @@
+ # DEEP-SVDD-BOUNDARY
+ > **Category:** SCADA Anomaly Detection  
+ > **Platform adapter:** `m13-deep-svdd`  
+-> **Status:** integrated
++> **Status:** integrated (platform supplies its own training loop; Model 6 ships one too)
+ 
+ ## Description
+ Deep Support Vector Data Description mapping telemetry into a hypersphere boundary for abnormal state isolation.
+ 
+-This is model **m13** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays independently usable (`python model.py`); the unified **wt-pm** platform wraps the original `model.py` through adapter `m13-deep-svdd` — it does not replace or fork this code.
++This is model **m13** of the WT-PM wind-turbine predictive-maintenance suite (sixth repository alphabetically in the collection). The repository stays independently usable (`python model.py`). The unified **wt-pm** platform wraps the original `model.py` through adapter `m13-deep-svdd` — it does not replace or fork this code.
+ 
+-The repository ships the SVDD building blocks — the feature-space network, the hypersphere-centre initialiser and the SVDD objective. The platform adapter supplies the training loop: it standardizes its feature table, initializes the centre with the repo's `init_center`, then minimizes `svdd_loss` for 60 Adam steps. Anomaly score at inference is the squared distance of a sample's representation to the learned centre.
++**Model 6** extends the original scaffold (3-layer MLP with biases, no data, no training loop) to a **6-layer bias-free encoder** trained with the one-class Deep SVDD objective (Ruff et al., ICML 2018), plus a full data → training → evaluation pipeline:
+ 
+ ```
+-Input (input_dim standardized features)
+-  └─ Linear(input_dim → 64) → ReLU
+-  └─ Linear(64 → 32) → ReLU
+-  └─ Linear(32 → rep_dim)          # hypersphere representation z
+-      svdd_loss = mean ‖z − c‖²    # c = hypersphere centre (init_center)
++Input (64 standardized + ZCA-whitened SCADA features)
++  └─ Linear(64 → 128)  → LeakyReLU(0.1)     # no bias in any layer
++  └─ Linear(128 → 96)  → LeakyReLU(0.1)
++  └─ Linear(96 → 64)   → LeakyReLU(0.1)
++  └─ Linear(64 → 48)   → LeakyReLU(0.1)
++  └─ Linear(48 → 32)   → LeakyReLU(0.1)
++  └─ Linear(32 → rep_dim)                    # hypersphere representation z
++      score = ‖z − c‖²                       # c = fixed centre from init_center
+ ```
+ 
++- **Why bias-free:** with bias terms a network can output the constant `c` for every input (zero loss, no information) — the "hypersphere collapse" trivial solution. Removing all biases and keeping `c` fixed rules it out, as in the Deep SVDD paper. Kaiming init keeps representation scale through six layers.
++- **Preprocessing:** standardize, then ZCA-whiten with statistics from the healthy training window. The 64 features are mean/std/min/max views of 16 channels and are strongly correlated; whitening stops a few physical signals from dominating the distance. (Without it, every SVDD variant tested plateaued around AUROC 0.80.)
++- **Training:** `init_center` on the training window, then `svdd_loss` with Adam (lr 1e-4, weight decay 1e-6, batch 256) for a **fixed 20 epochs**. Deep SVDD keeps lowering healthy-data loss long after fault contrast stops improving, and a healthy-only validation set gives no label-free signal to stop on — so the budget is committed up front. The AUROC-vs-epoch curve is still recorded as a diagnostic (`auroc_by_epoch_diagnostic`), never used for selection.
++- **Alarm:** threshold = 99th percentile of healthy validation distances; an alarm fires after 3 consecutive hourly exceedances.
++- **Data:** synthetic 24-turbine farm, 120 days, hourly. 16 physical channels sampled every 10 min (wind, power curve, rotor speed, pitch, yaw error, ambient/nacelle/gearbox-oil/gearbox-bearing/generator-bearing temperatures, three winding temperatures — all with first-order thermal lag — drivetrain and tower vibration, phase-current imbalance) summarized per hour as mean/std/min/max → **64 features**. Six incipient fault types are injected into 12 turbines (2 each), **test window only**, each ramping in over 4–10 days: gearbox bearing overheating, generator winding hot-spot, pitch misalignment, yaw misalignment, drivetrain bearing wear, rotor imbalance.
++- **Split (chronological):** days 0–70 train (healthy only — one-class), 70–85 validation (healthy; threshold), 85–120 test (12 healthy + 12 faulty turbines; 20,160 records, 6,607 faulty).
++
+ ## Structure
+ ```
+-├── model.py           # DeepSVDDNetwork, init_center, svdd_loss (definitions only)
++├── model.py           # Model 6 architecture + farm synthesis + training/evaluation script
+ ├── requirements.txt   # Dependencies
++├── results/           # Run outputs (metrics JSON, seed sweep, .pt weights)
++├── index.html         # Project page
++├── docs/              # Project page (GitHub Pages copy)
+ ├── .gitignore         # Environment and data exclusions
+ └── README.md          # Project overview
+ ```
+@@ -32,11 +45,40 @@ Input (input_dim standardized features)
+    pip install -r requirements.txt
+    ```
+ 
+-2. Inspect the module (definitions only — there is no training script or dataset in this repository):
++2. Run Model 6 (farm synthesis → whitening → Deep SVDD → evaluation, ~25 s on CPU):
+    ```bash
+-   python model.py
++   python model.py              # seed 42
++   python model.py --seed 3     # any other seed: regenerates the farm and the init
+    ```
+-   `model.py` defines `DeepSVDDNetwork`, `init_center` and `svdd_loss` and exits; training is performed by the caller (the platform adapter, or your own loop).
++
++Outputs:
++- Printed comparison table (Model 6 vs the original scaffold vs a Mahalanobis reference) and per-fault detection delays
++- `results/model6_metrics.json` — full metrics, including every fault event
++- `results/model6_weights.pt` — weights, centre, standardization + whitening statistics and threshold (excluded from git via `.gitignore`)
++
++## Results
++
++All three detectors use the identical pipeline (same data, whitening, threshold rule and alarm persistence); only the scoring model differs. "Scaffold" is the original 3-layer network with biases trained with the same 20-epoch schedule. Mahalanobis distance is the linear reference (squared norm in the whitened space).
++
++**Seed 42** (`results/model6_metrics.json`, deterministic):
++
++| detector | AUROC | precision | recall | F1 | events detected | median delay | false alarms /100 healthy turbine-days |
++|---|---|---|---|---|---|---|---|
++| **Model 6** (6-layer, bias-free) | 0.865 | 1.000 | 0.560 | **0.718** | **12/12** | **65.5 h** | **0.0** |
++| original scaffold (3-layer, biases) | **0.871** | 1.000 | 0.572 | 0.727 | 10/12 | 65.5 h | 0.0 |
++| Mahalanobis (linear) | 0.870 | 0.999 | 0.481 | 0.649 | 11/12 | 116 h | 0.71 |
++
++**Six seeds** (42, 1–5; `results/model6_seed_sweep.json`) — each seed regenerates the fault turbines, onsets, ramps, noise and network init:
++
++| detector | AUROC (mean ± sd) | F1 (mean ± sd) | events detected | median delay (all detected events) | false alarms /100 turbine-days |
++|---|---|---|---|---|---|
++| **Model 6** | **0.885 ± 0.016** | **0.782 ± 0.038** | **68/72** | **56.5 h** | 0.04 |
++| original scaffold | 0.864 ± 0.013 | 0.702 ± 0.047 | 59/72 | 70.0 h | 0.04 |
++| Mahalanobis (linear) | 0.877 ± 0.009 | 0.661 ± 0.059 | 63/72 | 95.0 h | 1.03 |
++
++Seed 42 happens to be Model 6's weakest AUROC of the six; across seeds it leads on AUROC, F1, events detected and delay (ties the scaffold on false alarms), catching 9 more fault events than the scaffold and about half a day sooner. Per-fault delays at seed 42 (hours after onset, severity at detection): generator winding 25 h / 33 h (sev 0.12 / 0.17), rotor imbalance 32 h / 43 h, drivetrain bearing 32 h / 66 h, gearbox bearing 65 h / 109 h, pitch misalignment ~155 h, yaw misalignment 114 h / 407 h — yaw is the hardest (its signature is a power deficit that overlaps natural wind variability).
++
++Precision is ~1.0 because the 99th-percentile threshold plus 3-hour persistence is conservative; recall is limited mainly by the start of each ramp, where the fault is labelled (severity > 0) but still physically negligible.
+ 
+ ## Model
+ 
+@@ -44,15 +86,18 @@ Input (input_dim standardized features)
+ 
+ | Block | Definition |
+ |---|---|
+-| `DeepSVDDNetwork(input_dim=64, rep_dim=32)` | `Sequential(Linear(input_dim, 64), ReLU, Linear(64, 32), ReLU, Linear(32, rep_dim))`; `forward(x)` returns the representation `z`; `model.c` holds the hypersphere centre once initialised |
+-| `init_center(model, loader, device="cpu", eps=0.1)` | One forward pass over `loader` (batches as 1-tuples `(x,)`); sets `model.c` to the mean representation, clipped away from zero by `eps` |
++| `DeepSVDDNetwork(input_dim=64, rep_dim=32, hidden=(128, 96, 64, 48, 32))` | 6 bias-free `Linear` layers with `LeakyReLU(0.1)` between them; `forward(x)` returns `z`; `model.c` holds the centre once initialised |
++| `init_center(model, loader, device="cpu", eps=0.1)` | Forward pass over `loader` (batches as 1-tuples `(x,)`); sets and returns `model.c` = mean representation, with every coordinate pushed to at least `eps` in magnitude |
+ | `svdd_loss(outputs, c)` | Mean over the batch of squared distances `‖z − c‖²` |
++| `anomaly_score(model, x)` | Additive helper: per-sample `‖φ(x) − c‖²` (eval mode, no grad) |
++| `train_svdd(model, X_train, X_val=None, epochs=20, ...)` | Additive helper: fixed-budget mini-batch Deep SVDD training |
+ 
+ - **Input:** feature tensor `x` of shape `(batch_size, input_dim)` (`float32`).
+-- **Output:** representation `z` of shape `(batch_size, rep_dim)`; anomaly score is `‖z − c‖²` computed by the caller.
+-- **Size:** 7,296 parameters for the default `(input_dim=64, rep_dim=32)` configuration (5,104 parameters when the platform instantiates it on its 38-column feature table with `rep_dim=16`).
++- **Output:** representation `z` of shape `(batch_size, rep_dim)`; anomaly score is `‖z − c‖²`.
++- **Size:** 32,256 parameters for the default `(input_dim=64, rep_dim=32)` configuration (28,416 when the platform instantiates it on its 38-column feature table with `rep_dim=16`). The original scaffold was 7,296 / 5,104.
++- **Import is side-effect free:** no seeding, no training, no file I/O on `import model` — the pipeline runs only under `python model.py`.
+ 
+-`requirements.txt` lists `torch numpy scikit-learn`; `model.py` itself only imports `torch` (`torch.nn`). Verified with Python 3.11 and PyTorch 2.14.
++`requirements.txt` lists `torch` and `numpy`. Verified with Python 3.11 and PyTorch 2.14.
+ 
+ ## Platform contract
+ 
+@@ -63,7 +108,7 @@ Input (input_dim standardized features)
+ | Integration role | One-class anomaly stream (`TaskType.ANOMALY_DETECTION`), routed as a Hermes `anomaly` voter |
+ | Deployment / fallback | `cloud`, `edge_gpu`, `edge_cpu` (requires `torch`) · falls back to `m14-isolation-forest` |
+ 
+-The platform adapter `m13-deep-svdd` calls the original API surface exactly as defined here: `DeepSVDDNetwork(input_dim=..., rep_dim=16)`, `init_center(model, [(Xs,)])` (note the 1-tuple batches), and `svdd_loss(model(Xs), model.c)` — 60 Adam steps (lr 1e-3, weight decay 1e-5) on sigmoid/robust-standardized features. Records emitted via `ModelOutput.to_records()` follow `WTDataSchema` (`wt-pm.platform.v1`).
++The platform adapter `m13-deep-svdd` calls the API exactly as defined here, unchanged by Model 6: `DeepSVDDNetwork(input_dim=..., rep_dim=16)`, `init_center(model, [(Xs,)])` (note the 1-tuple batches), and `svdd_loss(model(Xs), model.c)` — 60 full-batch Adam steps (lr 1e-3, weight decay 1e-5) on its own robust-standardized features. The adapter does not use this repo's whitening or training helpers. Verified against the platform's `test_deep_svdd_detects_ramp` (passes); across 20 unseeded adapter runs the late-vs-early anomaly-score margin was 117,887 minimum / 377,858 median (scaffold: 32,331 / 83,097; the test requires > 1.0). Records emitted via `ModelOutput.to_records()` follow `WTDataSchema` (`wt-pm.platform.v1`).
+ 
+ To run this model inside the platform (Python ≥ 3.10):
+ 
+@@ -79,12 +124,14 @@ More on how the 25 models fit together: [platform architecture](https://github.c
+ ## Model Info
+ - **Repo name:** `wt-pm-deep-svdd-boundary`
+ - **Category:** SCADA Anomaly Detection
+-- **Model:** Deep SVDD MLP encoder (~7.3K parameters default / ~5.1K in platform configuration)
+-- **Dependencies:** `torch` (`numpy`, `scikit-learn` listed for caller convenience)
++- **Model:** 6-layer bias-free Deep SVDD encoder (~32K parameters default / ~28K in platform configuration)
++- **Dependencies:** `torch`, `numpy`
+ 
+ ## Honest limits
+ 
+-- Definitions only: no dataset, training loop, or trained weights ship in this repository; the platform adapter trains on standardized simulator features (fidelity rung 1, see the [fidelity ladder](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/docs/fidelity_ladder.md)).
+-- One-class boundary quality depends on the training window being genuinely healthy; contamination shifts the centre toward faults.
+-- `init_center` clips centre coordinates with magnitude below `eps=0.1` to ±`eps` (standard Deep-SVDD practice to avoid trivial solutions at the origin).
+-- Anomaly scores are calibrated by the platform adapter (robust z), not by this repository.
++- **Synthetic data only.** The farm simulator is physically motivated but simple; numbers above are not field results. On real SCADA (fidelity rung 1 of the platform's [fidelity ladder](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/docs/fidelity_ladder.md)) expect lower recall and more false alarms.
++- **The deep model's margin over a linear baseline is modest.** Mahalanobis distance on the same whitened features reaches AUROC 0.877 vs Model 6's 0.885. Model 6's clearer advantage is at the alarm level — higher F1, more events caught, earlier detection and ~25× fewer false-alarm events.
++- **Training length matters and is fixed, not tuned per run.** AUROC peaks around 10 epochs and drifts down slowly after (seed 42: 0.876 at 10, 0.865 at 20, 0.853 at 40). The 20-epoch budget was chosen before looking at test results and kept for every seed.
++- **One-class assumption:** boundary quality depends on the training window being genuinely healthy; contamination pulls the centre toward faults.
++- `init_center` pushes centre coordinates smaller than `eps=0.1` in magnitude out to ±`eps` (standard Deep SVDD practice; a bias-free network can otherwise reach the origin trivially).
++- Inside the platform, scores are calibrated by the adapter (robust z), not by this repository, and the adapter's 60-step schedule (no whitening) is its own choice.
+diff --git a/docs/index.html b/docs/index.html
+index 496b625..1b47ac0 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -27,12 +27,14 @@
+       <code>pip install -r requirements.txt</code><br><br>
+       <code>python model.py</code>
+       <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>torch numpy scikit-learn</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Dependencies</strong><br><code>torch numpy</code></div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m13-deep-svdd</code></div>
++        <div><strong>Status</strong><br>integrated (6-layer bias-free encoder + full pipeline)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Model 6 ships a 6-layer bias-free Deep SVDD encoder with a 24-turbine synthetic farm, ZCA whitening and a fixed 20-epoch training schedule.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index 496b625..1b47ac0 100644
+--- a/index.html
++++ b/index.html
+@@ -27,12 +27,14 @@
+       <code>pip install -r requirements.txt</code><br><br>
+       <code>python model.py</code>
+       <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>torch numpy scikit-learn</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Dependencies</strong><br><code>torch numpy</code></div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m13-deep-svdd</code></div>
++        <div><strong>Status</strong><br>integrated (6-layer bias-free encoder + full pipeline)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Model 6 ships a 6-layer bias-free Deep SVDD encoder with a 24-turbine synthetic farm, ZCA whitening and a fixed 20-epoch training schedule.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/model.py b/model.py
+index 06427b8..97fa1b0 100644
+--- a/model.py
++++ b/model.py
+@@ -1,29 +1,556 @@
+-# Deep SVDD Implementation
++"""Model 6 — 6-layer Deep SVDD one-class boundary for SCADA anomaly detection.
++
++Extends the original scaffold (3-layer MLP with biases, no data, no training
++loop) to a **6-layer bias-free encoder** trained with the one-class Deep SVDD
++objective (Ruff et al., ICML 2018):
++
++    Linear(in→128) → Linear(128→96) → Linear(96→64)
++        → Linear(64→48) → Linear(48→32) → Linear(32→rep_dim)   [no biases]
++    LeakyReLU(0.1) between layers · score = ‖φ(x) − c‖²
++
++Why bias-free: with bias terms the network can map every input to the centre
++``c`` (constant output, zero loss) — the "hypersphere collapse" trivial
++solution. Removing biases (and keeping ``c`` fixed after initialisation) rules
++that out, as in the original Deep SVDD paper.
++
++Pipeline
++--------
++1. Synthesize hourly SCADA telemetry for a 24-turbine farm over 120 days:
++   16 physical channels (wind, power, rotor speed, pitch, yaw error,
++   temperatures with first-order thermal lag, vibrations, phase-current
++   imbalance) sampled every 10 minutes and summarized per hour as
++   mean / std / min / max → 64 features.
++2. Inject six incipient fault types into 12 turbines during the test window
++   only (gearbox bearing overheating, generator winding hot-spot, pitch
++   misalignment, yaw misalignment, drivetrain bearing wear, rotor imbalance),
++   each ramping in over 4–10 days.
++3. Split **chronologically**: days 0–70 train (healthy only — one-class),
++   days 70–85 validation (healthy; early stopping + alarm threshold),
++   days 85–120 test (healthy + faulty turbines).
++4. Standardize, then ZCA-whiten with statistics from the healthy training
++   window (decorrelates the mean/std/min/max views of each channel so no
++   single physical signal dominates the distance). Initialise the centre with
++   ``init_center`` and train with ``svdd_loss`` for a fixed, short schedule
++   (20 epochs, Adam lr 1e-4) — Deep SVDD keeps lowering healthy-data loss
++   long after fault contrast stops improving, and with healthy-only
++   validation there is no label-free signal to stop on, so the budget is
++   fixed up front.
++5. Alarm threshold = 99th percentile of validation distances; an alarm is
++   raised after 3 consecutive hourly exceedances. Report AUROC, point-wise
++   precision/recall/F1, false-alarm rate, per-fault detection delay — and the
++   identical protocol run on the original 3-layer scaffold network, plus a
++   linear Mahalanobis-distance reference.
++
++Run:
++    python model.py              # seed 42 -> results/model6_metrics.json
++    python model.py --seed 3     # any other seed (farm + init are regenerated)
++
++The wt-pm platform imports this file through adapter ``m13-deep-svdd`` and
++calls ``DeepSVDDNetwork(input_dim=..., rep_dim=16)``,
++``init_center(model, [(Xs,)])`` and ``svdd_loss(model(Xs), model.c)`` — keep
++those names and signatures stable. Importing this module has no side effects
++(no seeding, no training); everything below ``main()`` runs only as a script.
++"""
++
++import json
++import os
++import time
++
++import numpy as np
+ import torch
+ import torch.nn as nn
+ 
++# ----------------------------------------------------------------------------
++# Configuration
++# ----------------------------------------------------------------------------
++SEED = 42
++N_TURBINES = 24
++DAYS = 120
++SUBSTEPS = 6                     # 10-minute samples per hourly record
++TRAIN_END_DAY = 70               # [0, 70)   healthy — training
++VAL_END_DAY = 85                 # [70, 85)  healthy — early stopping + threshold
++FAULT_ONSET_RANGE = (88.0, 108.0)  # fault onsets (campaign days), test window only
++FAULT_RAMP_RANGE = (4.0, 10.0)     # days for a fault to reach full severity
++FAULT_TYPES = (
++    "gearbox_bearing", "generator_winding", "pitch_misalignment",
++    "yaw_misalignment", "drivetrain_bearing", "rotor_imbalance",
++)
++TURBINES_PER_FAULT = 2           # 6 types x 2 = 12 faulty, 12 healthy turbines
++
++HIDDEN = (128, 96, 64, 48, 32)   # 5 hidden widths + rep layer = 6 linear layers
++REP_DIM = 32
++LEAKY_SLOPE = 0.1
++SVDD_EPOCHS = 20                 # fixed budget (see docstring, step 4)
++SVDD_LR = 1e-4
++WEIGHT_DECAY = 1e-6
++BATCH_SIZE = 256
++WHITEN_SHRINK = 1e-2             # eigenvalue floor for ZCA whitening
++SENSITIVITY_EPOCHS = (5, 10, 20, 30, 40)   # diagnostic only, never used for selection
++THRESHOLD_QUANTILE = 0.99
++ALARM_PERSISTENCE_H = 3
++RESULTS_DIR = "results"
++WEIGHTS_NAME = "model6_weights.pt"
++METRICS_NAME = "model6_metrics.json"
++
++CHANNELS = (
++    "wind_speed", "power", "rotor_speed", "pitch_angle", "yaw_error",
++    "ambient_temp", "nacelle_temp", "gearbox_oil_temp", "gearbox_bearing_temp",
++    "gen_bearing_temp", "gen_winding_u", "gen_winding_v", "gen_winding_w",
++    "drivetrain_vib", "tower_vib", "current_imbalance",
++)
++STATS = ("mean", "std", "min", "max")
++FEATURE_NAMES = tuple(f"{c}_{s}" for s in STATS for c in CHANNELS)
++
++
++# ----------------------------------------------------------------------------
++# Model 6 architecture (platform API: DeepSVDDNetwork / init_center / svdd_loss)
++# ----------------------------------------------------------------------------
+ class DeepSVDDNetwork(nn.Module):
+-    def __init__(self, input_dim=64, rep_dim=32):
++    """6-layer bias-free Deep SVDD encoder φ(x) → R^rep_dim.
++
++    ``model.c`` holds the hypersphere centre once ``init_center`` has run.
++    """
++
++    def __init__(self, input_dim=64, rep_dim=REP_DIM, hidden=HIDDEN):
+         super().__init__()
++        self.input_dim = input_dim
+         self.rep_dim = rep_dim
+-        self.net = nn.Sequential(
+-            nn.Linear(input_dim, 64), nn.ReLU(),
+-            nn.Linear(64, 32), nn.ReLU(),
+-            nn.Linear(32, rep_dim)
+-        )
+-        self.c = None  # hypersphere center
++        dims = [input_dim, *hidden, rep_dim]
++        layers = []
++        for i, (d_in, d_out) in enumerate(zip(dims[:-1], dims[1:])):
++            layers.append(nn.Linear(d_in, d_out, bias=False))
++            if i < len(dims) - 2:
++                layers.append(nn.LeakyReLU(LEAKY_SLOPE))
++        self.net = nn.Sequential(*layers)
++        # Variance-preserving init so representations keep their scale through
++        # six layers (PyTorch's default init shrinks them ~3x per layer).
++        linears = [m for m in self.net if isinstance(m, nn.Linear)]
++        for lin in linears[:-1]:
++            nn.init.kaiming_normal_(lin.weight, a=LEAKY_SLOPE, nonlinearity="leaky_relu")
++        nn.init.xavier_normal_(linears[-1].weight)
++        self.c = None  # hypersphere centre
+ 
+     def forward(self, x):
+         return self.net(x)
+ 
++
+ def init_center(model, loader, device="cpu", eps=0.1):
++    """Set ``model.c`` to the mean representation over ``loader``.
++
++    ``loader`` yields 1-tuples ``(x,)`` (a DataLoader over a TensorDataset, or
++    simply ``[(X,)]``). Coordinates with magnitude below ``eps`` are pushed to
++    ±``eps`` so the centre is never at (or near) the origin, which a bias-free
++    network could reach trivially. Returns the centre as well.
++    """
+     model.eval()
++    total, n = None, 0
+     with torch.no_grad():
+-        outputs = [model(x.to(device)) for x, in loader]
+-        c = torch.cat(outputs).mean(dim=0)
+-        c[(abs(c) < eps) & (c < 0)] = -eps
+-        c[(abs(c) < eps) & (c > 0)] = eps
+-        model.c = c
++        for x, in loader:
++            z = model(x.to(device))
++            s = z.sum(dim=0)
++            total = s if total is None else total + s
++            n += z.shape[0]
++    c = total / n
++    c[(c.abs() < eps) & (c < 0)] = -eps
++    c[(c.abs() < eps) & (c >= 0)] = eps
++    model.c = c
++    return c
++
+ 
+ def svdd_loss(outputs, c):
++    """One-class Deep SVDD objective: mean squared distance to the centre."""
+     return torch.mean(torch.sum((outputs - c) ** 2, dim=1))
++
++
++def anomaly_score(model, x):
++    """Squared distance ‖φ(x) − c‖² per sample (additive helper)."""
++    model.eval()
++    with torch.no_grad():
++        return ((model(x) - model.c) ** 2).sum(dim=1)
++
++
++def train_svdd(model, X_train, X_val=None, epochs=SVDD_EPOCHS, lr=SVDD_LR,
++               batch_size=BATCH_SIZE, generator=None, on_epoch=None):
++    """Mini-batch Deep SVDD training for a fixed number of epochs (additive helper).
++
++    ``model.c`` must already be set (``init_center``) and stays fixed.
++    ``on_epoch(epoch, model)`` is an optional callback (diagnostics only).
++    Returns a small history dict with train/val loss per epoch.
++    """
++    opt = torch.optim.Adam(model.parameters(), lr=lr, weight_decay=WEIGHT_DECAY)
++    hist = {"train_loss": [], "val_loss": []}
++    for epoch in range(1, epochs + 1):
++        model.train()
++        perm = torch.randperm(X_train.shape[0], generator=generator)
++        for i in range(0, X_train.shape[0], batch_size):
++            xb = X_train[perm[i:i + batch_size]]
++            opt.zero_grad()
++            loss = svdd_loss(model(xb), model.c)
++            loss.backward()
++            opt.step()
++        hist["train_loss"].append(float(anomaly_score(model, X_train).mean()))
++        if X_val is not None:
++            hist["val_loss"].append(float(anomaly_score(model, X_val).mean()))
++        if on_epoch is not None:
++            on_epoch(epoch, model)
++    return hist
++
++
++# ----------------------------------------------------------------------------
++# Synthetic SCADA farm with incipient faults
++# ----------------------------------------------------------------------------
++def _power_curve(v):
++    p = np.clip((v - 3.0) / 9.0, 0.0, 1.0) ** 3
++    return np.where(v >= 25.0, 0.0, p)
++
++
++def generate_farm(rng):
++    """Return hourly features (N_TURBINES, hours, 64), fault severity and fault map."""
++    steps_per_day = 24 * SUBSTEPS
++    T = DAYS * steps_per_day
++    nt = N_TURBINES
++    t_day = np.arange(T) / steps_per_day                      # campaign day of each 10-min step
++    hour = (t_day % 1.0) * 24.0
++
++    # --- fault assignment (test window only) --------------------------------
++    order = rng.permutation(nt)
++    fault_of = {}
++    for k, ftype in enumerate(FAULT_TYPES):
++        for j in range(TURBINES_PER_FAULT):
++            fault_of[int(order[k * TURBINES_PER_FAULT + j])] = ftype
++    onset = np.full(nt, np.inf)
++    ramp = np.ones(nt)
++    for tid in fault_of:
++        onset[tid] = rng.uniform(*FAULT_ONSET_RANGE)
++        ramp[tid] = rng.uniform(*FAULT_RAMP_RANGE)
++    sev = np.clip((t_day[None, :] - onset[:, None]) / ramp[:, None], 0.0, 1.0)  # (nt, T)
++
++    def is_(ftype):
++        return np.array([fault_of.get(i) == ftype for i in range(nt)], float)[:, None]
++
++    # --- wind ----------------------------------------------------------------
++    seasonal = 2.0 * np.sin(2 * np.pi * t_day / 37.0) + 1.0 * np.sin(2 * np.pi * t_day / 11.0)
++    diurnal = 0.8 * np.sin(2 * np.pi * (hour - 14.0) / 24.0)
++    farm = np.zeros(T)
++    turb = np.zeros((nt, T))
++    e_f = rng.normal(0, 0.30, T)
++    e_t = rng.normal(0, 0.35, (nt, T))
++    for t in range(1, T):
++        farm[t] = 0.985 * farm[t - 1] + e_f[t]
++        turb[:, t] = 0.90 * turb[:, t - 1] + e_t[:, t]
++    v = np.clip(7.8 + seasonal + diurnal + 1.2 * farm + turb, 0.0, 28.0)
++
++    # --- turbine-specific calibration ---------------------------------------
++    eff = rng.uniform(0.96, 1.04, (nt, 1))
++    t_off = rng.normal(0.0, 1.0, (nt, 1))
++    vib_gain = rng.uniform(0.9, 1.1, (nt, 1))
++
++    # --- yaw / pitch / power -------------------------------------------------
++    yaw = np.zeros((nt, T))
++    e_y = rng.normal(0, 1.2, (nt, T))
++    for t in range(1, T):
++        yaw[:, t] = 0.95 * yaw[:, t - 1] + e_y[:, t]
++    yaw = yaw + 12.0 * sev * is_("yaw_misalignment")
++    pitch = np.where(v > 11.5, 2.2 * np.clip(v - 11.5, 0, None) ** 0.9, 0.0)
++    pitch = pitch + 3.0 * sev * is_("pitch_misalignment") + rng.normal(0, 0.15, (nt, T))
++    p = eff * _power_curve(v) * np.cos(np.deg2rad(yaw)) ** 3
++    p = p * (1.0 - 0.15 * sev * is_("pitch_misalignment") * (v > 9.0))
++    p = p * (1.0 - 0.10 * sev * is_("rotor_imbalance"))
++    p = np.clip(p + rng.normal(0, 0.015, (nt, T)), 0.0, 1.05)
++    rotor = np.where(v >= 3.0, np.minimum(6.0 + 1.25 * (v - 3.0), 16.0), 2.0)
++    rotor = rotor + rng.normal(0, 0.15, (nt, T)) * (1.0 + 2.0 * sev * is_("rotor_imbalance"))
++
++    # --- temperatures (first-order thermal lag) ------------------------------
++    amb = (9.0 + 5.0 * np.sin(2 * np.pi * t_day / 120.0) + 3.5 * np.sin(2 * np.pi * (hour - 15.0) / 24.0)
++           + rng.normal(0, 0.3, (nt, T)) + t_off)
++    s_gb = sev * is_("gearbox_bearing")
++    s_gw = sev * is_("generator_winding")
++    s_db = sev * is_("drivetrain_bearing")
++    targets = {
++        "nacelle": amb + 8.0 + 6.0 * p,
++        "oil": amb + 20.0 + 25.0 * p + 4.0 * s_db,
++        "gen_bear": amb + 15.0 + 18.0 * p,
++        "wind_u": amb + 25.0 + 45.0 * p ** 1.5 + 15.0 * s_gw * (0.3 + p),
++        "wind_v": amb + 25.0 + 45.0 * p ** 1.5,
++        "wind_w": amb + 25.0 + 45.0 * p ** 1.5,
++    }
++    taus = {"nacelle": 18, "oil": 12, "gen_bear": 9, "wind_u": 4, "wind_v": 4, "wind_w": 4}
++    temps = {k: np.empty((nt, T)) for k in targets}
++    for k in targets:
++        temps[k][:, 0] = targets[k][:, 0]
++    bear = np.empty((nt, T))
++    bear_target_extra = 12.0 * s_gb * (0.4 + p)
++    bear[:, 0] = temps["oil"][:, 0] + 5.0 + 10.0 * p[:, 0]
++    for t in range(1, T):
++        for k, tau in taus.items():
++            temps[k][:, t] = temps[k][:, t - 1] + (targets[k][:, t] - temps[k][:, t - 1]) / tau
++        tb = temps["oil"][:, t] + 5.0 + 10.0 * p[:, t] + bear_target_extra[:, t]
++        bear[:, t] = bear[:, t - 1] + (tb - bear[:, t - 1]) / 6.0
++    noise_t = lambda: rng.normal(0, 0.25, (nt, T))  # noqa: E731
++
++    # --- vibration / electrical ----------------------------------------------
++    dvib = vib_gain * (0.3 + 0.08 * rotor + 0.4 * p) * rng.lognormal(0, 0.08, (nt, T))
++    dvib = dvib * (1.0 + 1.5 * s_db)
++    tvib = (0.05 + 0.02 * v) * rng.lognormal(0, 0.10, (nt, T)) * (1.0 + 1.2 * sev * is_("rotor_imbalance"))
++    imb = np.abs(0.5 + rng.normal(0, 0.15, (nt, T))) + 3.0 * s_gw
++
++    raw = np.stack([
++        v, p, rotor, pitch, yaw, amb,
++        temps["nacelle"] + noise_t(), temps["oil"] + noise_t(), bear + noise_t(),
++        temps["gen_bear"] + noise_t(), temps["wind_u"] + noise_t(),
++        temps["wind_v"] + noise_t(), temps["wind_w"] + noise_t(),
++        dvib, tvib, imb,
++    ], axis=-1)                                              # (nt, T, 16)
++
++    hours = DAYS * 24
++    r = raw.reshape(nt, hours, SUBSTEPS, len(CHANNELS))
++    feats = np.concatenate([r.mean(2), r.std(2), r.min(2), r.max(2)], axis=-1).astype(np.float32)
++    sev_h = sev.reshape(nt, hours, SUBSTEPS).mean(2)
++    return feats, sev_h, fault_of, onset, ramp
++
++
++# ----------------------------------------------------------------------------
++# Evaluation helpers
++# ----------------------------------------------------------------------------
++def _auroc(y, s):
++    """Rank-based ROC AUC (Mann-Whitney U), ties averaged."""
++    y = np.asarray(y, bool)
++    order = np.argsort(s, kind="mergesort")
++    ranks = np.empty(len(s))
++    s_sorted = np.asarray(s)[order]
++    i = 0
++    while i < len(s):
++        j = i
++        while j + 1 < len(s) and s_sorted[j + 1] == s_sorted[i]:
++            j += 1
++        ranks[order[i:j + 1]] = (i + j) / 2.0 + 1.0
++        i = j + 1
++    n_pos, n_neg = y.sum(), (~y).sum()
++    return float((ranks[y].sum() - n_pos * (n_pos + 1) / 2.0) / (n_pos * n_neg))
++
++
++def _persistent(alarm, k=ALARM_PERSISTENCE_H):
++    """Per-turbine alarm that fires once ``k`` consecutive hours exceed the threshold."""
++    out = np.zeros_like(alarm)
++    for i in range(alarm.shape[0]):
++        run = 0
++        for t in range(alarm.shape[1]):
++            run = run + 1 if alarm[i, t] else 0
++            out[i, t] = run >= k
++    return out
++
++
++def _evaluate(name, scores_test, thr, sev_test, test_day0, fault_of, onset, ramp):
++    """Point-wise and event-level metrics on the test window."""
++    y = sev_test > 0.0
++    s = scores_test.ravel()
++    exceed = scores_test > thr
++    alarm = _persistent(exceed)
++    tp = int((alarm & y).sum())
++    fp = int((alarm & ~y).sum())
++    fn = int((~alarm & y).sum())
++    prec = tp / (tp + fp) if tp + fp else 0.0
++    rec = tp / (tp + fn) if tp + fn else 0.0
++    f1 = 2 * prec * rec / (prec + rec) if prec + rec else 0.0
++    healthy = [i for i in range(scores_test.shape[0]) if i not in fault_of]
++    healthy_days = len(healthy) * scores_test.shape[1] / 24.0
++    # alarm *events* on healthy turbines: rising edges of the persistent alarm
++    fa_events = sum(int(np.sum(np.diff(alarm[i].astype(int), prepend=0) == 1)) for i in healthy)
++    events = {}
++    for tid, ftype in sorted(fault_of.items()):
++        onset_h = int(np.ceil((onset[tid] - test_day0) * 24.0))
++        hits = np.flatnonzero(alarm[tid, onset_h:])
++        delay_h = float(hits[0]) if hits.size else None
++        events.setdefault(ftype, []).append({
++            "turbine": tid,
++            "onset_day": round(float(onset[tid]), 2),
++            "ramp_days": round(float(ramp[tid]), 2),
++            "detected": delay_h is not None,
++            "delay_hours": delay_h,
++            "severity_at_detection": (round(float(sev_test[tid, onset_h + int(delay_h)]), 3)
++                                      if delay_h is not None else None),
++        })
++    delays = [e["delay_hours"] for ev in events.values() for e in ev if e["detected"]]
++    n_events = sum(len(ev) for ev in events.values())
++    return {
++        "model": name,
++        "auroc": round(_auroc(y.ravel(), s), 4),
++        "threshold": round(float(thr), 6),
++        "pointwise": {"precision": round(prec, 4), "recall": round(rec, 4), "f1": round(f1, 4)},
++        "healthy_turbine_hourly_fpr": round(float(alarm[healthy].mean()), 5),
++        "false_alarm_events_per_100_turbine_days": round(100.0 * fa_events / healthy_days, 3),
++        "events_detected": f"{len(delays)}/{n_events}",
++        "median_detection_delay_hours": float(np.median(delays)) if delays else None,
++        "events": events,
++    }
++
++
++class _ScaffoldSVDD(nn.Module):
++    """The original 3-layer scaffold network (with biases), for comparison only."""
++
++    def __init__(self, input_dim=64, rep_dim=32):
++        super().__init__()
++        self.input_dim = input_dim
++        self.rep_dim = rep_dim
++        self.net = nn.Sequential(
++            nn.Linear(input_dim, 64), nn.ReLU(),
++            nn.Linear(64, 32), nn.ReLU(),
++            nn.Linear(32, rep_dim),
++        )
++        self.c = None
++
++    def forward(self, x):
++        return self.net(x)
++
++
++def _fit_whitener(X):
++    """ZCA whitening matrix from healthy training data (eigenvalue floor WHITEN_SHRINK)."""
++    w, V = np.linalg.eigh(np.cov(X, rowvar=False))
++    return ((V / np.sqrt(w + WHITEN_SHRINK)) @ V.T).astype(np.float32)
++
++
++def _run(model, X_tr, X_va, X_te, te_shape, y_te, seed):
++    """Fixed-budget Deep SVDD run; returns history, threshold, test scores, sensitivity."""
++    g = torch.Generator().manual_seed(seed)
++    init_center(model, torch.utils.data.DataLoader(
++        torch.utils.data.TensorDataset(X_tr), batch_size=1024))
++    snapshot = {}
++
++    def at_epoch(epoch, m):
++        if epoch == SVDD_EPOCHS:
++            snapshot["state"] = {k: v.detach().clone() for k, v in m.state_dict().items()}
++        if epoch in SENSITIVITY_EPOCHS:
++            snapshot.setdefault("auroc_by_epoch", {})[epoch] = round(
++                _auroc(y_te, anomaly_score(m, X_te).numpy()), 4)
++
++    hist = train_svdd(model, X_tr, X_va, epochs=max(SVDD_EPOCHS, *SENSITIVITY_EPOCHS),
++                      generator=g, on_epoch=at_epoch)
++    model.load_state_dict(snapshot["state"])           # the pre-committed budget
++    thr = float(np.quantile(anomaly_score(model, X_va).numpy(), THRESHOLD_QUANTILE))
++    scores = anomaly_score(model, X_te).numpy().reshape(te_shape)
++    summary = {
++        "epochs": SVDD_EPOCHS,
++        "train_loss": round(hist["train_loss"][SVDD_EPOCHS - 1], 5),
++        "val_loss": round(hist["val_loss"][SVDD_EPOCHS - 1], 5),
++    }
++    return summary, thr, scores, snapshot["auroc_by_epoch"]
++
++
++def main():
++    t0 = time.time()
++    torch.manual_seed(SEED)
++    rng = np.random.default_rng(SEED)
++    os.makedirs(RESULTS_DIR, exist_ok=True)
++
++    feats, sev, fault_of, onset, ramp = generate_farm(rng)
++    h_tr, h_va = TRAIN_END_DAY * 24, VAL_END_DAY * 24
++    assert sev[:, :h_va].max() == 0.0, "faults must stay out of train/val windows"
++    nf = feats.shape[-1]
++    tr = feats[:, :h_tr].reshape(-1, nf)
++    va = feats[:, h_tr:h_va].reshape(-1, nf)
++    te = feats[:, h_va:].reshape(-1, nf)
++    te_shape = feats[:, h_va:].shape[:2]
++    sev_te = sev[:, h_va:]
++    y_te = (sev_te > 0).ravel()
++
++    # preprocessing fitted on the healthy training window only
++    mu, sd = tr.mean(0), tr.std(0) + 1e-6
++    W = _fit_whitener((tr - mu) / sd)
++    prep = lambda a: torch.tensor(((a - mu) / sd) @ W, dtype=torch.float32)  # noqa: E731
++    X_tr, X_va, X_te = prep(tr), prep(va), prep(te)
++
++    print(f"Farm: {N_TURBINES} turbines x {DAYS} days hourly -> {nf} features")
++    print(f"Train {X_tr.shape[0]:,} | Val {X_va.shape[0]:,} | Test {X_te.shape[0]:,} records "
++          f"({int(y_te.sum()):,} faulty)")
++
++    torch.manual_seed(SEED)
++    model = DeepSVDDNetwork(input_dim=nf, rep_dim=REP_DIM)
++    n_params = sum(p.numel() for p in model.parameters())
++    hist6, thr6, sc6, sens6 = _run(model, X_tr, X_va, X_te, te_shape, y_te, SEED)
++    m6 = _evaluate("Model 6 (6-layer, bias-free)", sc6, thr6, sev_te,
++                   VAL_END_DAY, fault_of, onset, ramp)
++
++    torch.manual_seed(SEED)
++    base = _ScaffoldSVDD(input_dim=nf, rep_dim=REP_DIM)
++    histb, thrb, scb, sensb = _run(base, X_tr, X_va, X_te, te_shape, y_te, SEED)
++    mb = _evaluate("original scaffold (3-layer, biases)", scb, thrb, sev_te,
++                   VAL_END_DAY, fault_of, onset, ramp)
++
++    # linear reference: Mahalanobis distance == squared norm in whitened space
++    md = lambda X: (X ** 2).sum(1).numpy()  # noqa: E731
++    mm = _evaluate("Mahalanobis distance (linear reference)", md(X_te).reshape(te_shape),
++                   float(np.quantile(md(X_va), THRESHOLD_QUANTILE)), sev_te,
++                   VAL_END_DAY, fault_of, onset, ramp)
++
++    torch.save({"state_dict": model.state_dict(), "c": model.c, "mu": mu, "sd": sd,
++                "whitener": W, "threshold": thr6, "feature_names": FEATURE_NAMES},
++               os.path.join(RESULTS_DIR, WEIGHTS_NAME))
++
++    print("\n{:<42} {:>7} {:>7} {:>7} {:>7} {:>8} {:>8}".format(
++        "model", "AUROC", "prec", "recall", "F1", "events", "delay_h"))
++    for m in (m6, mb, mm):
++        pw = m["pointwise"]
++        print("{:<42} {:>7.3f} {:>7.3f} {:>7.3f} {:>7.3f} {:>8} {:>8}".format(
++            m["model"], m["auroc"], pw["precision"], pw["recall"], pw["f1"],
++            m["events_detected"], m["median_detection_delay_hours"]))
++    print(f"\nFalse-alarm events per 100 healthy turbine-days: Model 6 "
++          f"{m6['false_alarm_events_per_100_turbine_days']} | scaffold "
++          f"{mb['false_alarm_events_per_100_turbine_days']} | Mahalanobis "
++          f"{mm['false_alarm_events_per_100_turbine_days']}")
++    print("\nModel 6 per-fault detection delay (hours after onset):")
++    for ftype, evs in m6["events"].items():
++        print(f"  {ftype:<20} " + ", ".join(
++            f"T{e['turbine']:02d}: {e['delay_hours']:.0f}h (sev {e['severity_at_detection']:.2f})"
++            if e["detected"] else f"T{e['turbine']:02d}: missed" for e in evs))
++    print(f"\nAUROC vs epochs (diagnostic, not used for selection): Model 6 {sens6} | scaffold {sensb}")
++
++    metrics = {
++        "model": "model-6-deep-svdd",
++        "architecture": {
++            "layers": [nf, *HIDDEN, REP_DIM],
++            "linear_layers": len(HIDDEN) + 1,
++            "bias": False,
++            "activation": f"LeakyReLU({LEAKY_SLOPE})",
++            "params": n_params,
++        },
++        "training": {
++            "preprocessing": f"standardize + ZCA whitening (eigenvalue floor {WHITEN_SHRINK}), "
++                             "fitted on the healthy training window",
++            "centre": "init_center: mean training representation, |c_i| >= 0.1",
++            "svdd": {"optimizer": "adam", "lr": SVDD_LR, "weight_decay": WEIGHT_DECAY,
++                     "batch_size": BATCH_SIZE, **hist6},
++            "threshold": f"{THRESHOLD_QUANTILE:.0%} quantile of healthy validation distances",
++            "alarm_persistence_hours": ALARM_PERSISTENCE_H,
++        },
++        "data": {
++            "turbines": N_TURBINES, "days": DAYS, "records": int(feats.shape[0] * feats.shape[1]),
++            "features": nf, "feature_layout": "16 channels x (mean, std, min, max) per hour",
++            "split": f"chronological: train days 0-{TRAIN_END_DAY} (healthy), "
++                     f"val {TRAIN_END_DAY}-{VAL_END_DAY} (healthy), test {VAL_END_DAY}-{DAYS}",
++            "faulty_turbines": len(fault_of), "fault_types": list(FAULT_TYPES),
++            "test_faulty_records": int(y_te.sum()), "test_records": int(y_te.size),
++            "fault_label": "severity > 0 (includes the earliest, near-invisible part of each ramp)",
++        },
++        "test": m6,
++        "auroc_by_epoch_diagnostic": {"model6": sens6, "scaffold": sensb},
++        "baseline_scaffold": {**mb, "training": histb,
++                              "params": sum(p.numel() for p in base.parameters())},
++        "reference_mahalanobis": mm,
++        "seed": SEED,
++        "runtime_s": round(time.time() - t0, 1),
++    }
++    with open(os.path.join(RESULTS_DIR, METRICS_NAME), "w") as f:
++        json.dump(metrics, f, indent=2)
++    print(f"\nSaved {RESULTS_DIR}/{METRICS_NAME} and {RESULTS_DIR}/{WEIGHTS_NAME} "
++          f"({metrics['runtime_s']}s)")
++
++
++if __name__ == "__main__":
++    import argparse
++
++    ap = argparse.ArgumentParser(description="Model 6 Deep SVDD: synthesize, train, evaluate")
++    ap.add_argument("--seed", type=int, default=SEED)
++    ap.add_argument("--results-dir", default=RESULTS_DIR)
++    args = ap.parse_args()
++    SEED, RESULTS_DIR = args.seed, args.results_dir
++    main()
+diff --git a/requirements.txt b/requirements.txt
+index a188af1..af3149e 100644
+--- a/requirements.txt
++++ b/requirements.txt
+@@ -1,3 +1,2 @@
+ torch
+ numpy
+-scikit-learn
+diff --git a/results/model6_metrics.json b/results/model6_metrics.json
+new file mode 100644
+index 0000000..1bfa86d
+--- /dev/null
++++ b/results/model6_metrics.json
+@@ -0,0 +1,449 @@
++{
++  "model": "model-6-deep-svdd",
++  "architecture": {
++    "layers": [
++      64,
++      128,
++      96,
++      64,
++      48,
++      32,
++      32
++    ],
++    "linear_layers": 6,
++    "bias": false,
++    "activation": "LeakyReLU(0.1)",
++    "params": 32256
++  },
++  "training": {
++    "preprocessing": "standardize + ZCA whitening (eigenvalue floor 0.01), fitted on the healthy training window",
++    "centre": "init_center: mean training representation, |c_i| >= 0.1",
++    "svdd": {
++      "optimizer": "adam",
++      "lr": 0.0001,
++      "weight_decay": 1e-06,
++      "batch_size": 256,
++      "epochs": 20,
++      "train_loss": 0.14009,
++      "val_loss": 0.20778
++    },
++    "threshold": "99% quantile of healthy validation distances",
++    "alarm_persistence_hours": 3
++  },
++  "data": {
++    "turbines": 24,
++    "days": 120,
++    "records": 69120,
++    "features": 64,
++    "feature_layout": "16 channels x (mean, std, min, max) per hour",
++    "split": "chronological: train days 0-70 (healthy), val 70-85 (healthy), test 85-120",
++    "faulty_turbines": 12,
++    "fault_types": [
++      "gearbox_bearing",
++      "generator_winding",
++      "pitch_misalignment",
++      "yaw_misalignment",
++      "drivetrain_bearing",
++      "rotor_imbalance"
++    ],
++    "test_faulty_records": 6607,
++    "test_records": 20160,
++    "fault_label": "severity > 0 (includes the earliest, near-invisible part of each ramp)"
++  },
++  "test": {
++    "model": "Model 6 (6-layer, bias-free)",
++    "auroc": 0.8651,
++    "threshold": 1.428947,
++    "pointwise": {
++      "precision": 1.0,
++      "recall": 0.5603,
++      "f1": 0.7182
++    },
++    "healthy_turbine_hourly_fpr": 0.0,
++    "false_alarm_events_per_100_turbine_days": 0.0,
++    "events_detected": "12/12",
++    "median_detection_delay_hours": 65.5,
++    "events": {
++      "rotor_imbalance": [
++        {
++          "turbine": 0,
++          "onset_day": 91.79,
++          "ramp_days": 4.78,
++          "detected": true,
++          "delay_hours": 32.0,
++          "severity_at_detection": 0.283
++        },
++        {
++          "turbine": 3,
++          "onset_day": 95.41,
++          "ramp_days": 6.82,
++          "detected": true,
++          "delay_hours": 43.0,
++          "severity_at_detection": 0.266
++        }
++      ],
++      "drivetrain_bearing": [
++        {
++          "turbine": 6,
++          "onset_day": 101.66,
++          "ramp_days": 8.47,
++          "detected": true,
++          "delay_hours": 66.0,
++          "severity_at_detection": 0.327
++        },
++        {
++          "turbine": 10,
++          "onset_day": 107.35,
++          "ramp_days": 5.95,
++          "detected": true,
++          "delay_hours": 32.0,
++          "severity_at_detection": 0.231
++        }
++      ],
++      "pitch_misalignment": [
++        {
++          "turbine": 7,
++          "onset_day": 105.86,
++          "ramp_days": 8.67,
++          "detected": true,
++          "delay_hours": 156.0,
++          "severity_at_detection": 0.753
++        },
++        {
++          "turbine": 9,
++          "onset_day": 95.09,
++          "ramp_days": 9.82,
++          "detected": true,
++          "delay_hours": 154.0,
++          "severity_at_detection": 0.658
++        }
++      ],
++      "gearbox_bearing": [
++        {
++          "turbine": 15,
++          "onset_day": 92.54,
++          "ramp_days": 7.33,
++          "detected": true,
++          "delay_hours": 65.0,
++          "severity_at_detection": 0.377
++        },
++        {
++          "turbine": 16,
++          "onset_day": 104.46,
++          "ramp_days": 6.66,
++          "detected": true,
++          "delay_hours": 109.0,
++          "severity_at_detection": 0.685
++        }
++      ],
++      "yaw_misalignment": [
++        {
++          "turbine": 17,
++          "onset_day": 91.89,
++          "ramp_days": 6.8,
++          "detected": true,
++          "delay_hours": 407.0,
++          "severity_at_detection": 1.0
++        },
++        {
++          "turbine": 23,
++          "onset_day": 88.88,
++          "ramp_days": 4.93,
++          "detected": true,
++          "delay_hours": 114.0,
++          "severity_at_detection": 0.976
++        }
++      ],
++      "generator_winding": [
++        {
++          "turbine": 18,
++          "onset_day": 89.28,
++          "ramp_days": 8.97,
++          "detected": true,
++          "delay_hours": 25.0,
++          "severity_at_detection": 0.12
++        },
++        {
++          "turbine": 19,
++          "onset_day": 100.63,
++          "ramp_days": 8.55,
++          "detected": true,
++          "delay_hours": 33.0,
++          "severity_at_detection": 0.167
++        }
++      ]
++    }
++  },
++  "auroc_by_epoch_diagnostic": {
++    "model6": {
++      "5": 0.8691,
++      "10": 0.8757,
++      "20": 0.8651,
++      "30": 0.8584,
++      "40": 0.8527
++    },
++    "scaffold": {
++      "5": 0.8462,
++      "10": 0.861,
++      "20": 0.8706,
++      "30": 0.866,
++      "40": 0.8584
++    }
++  },
++  "baseline_scaffold": {
++    "model": "original scaffold (3-layer, biases)",
++    "auroc": 0.8706,
++    "threshold": 0.001362,
++    "pointwise": {
++      "precision": 1.0,
++      "recall": 0.5715,
++      "f1": 0.7273
++    },
++    "healthy_turbine_hourly_fpr": 0.0,
++    "false_alarm_events_per_100_turbine_days": 0.0,
++    "events_detected": "10/12",
++    "median_detection_delay_hours": 65.5,
++    "events": {
++      "rotor_imbalance": [
++        {
++          "turbine": 0,
++          "onset_day": 91.79,
++          "ramp_days": 4.78,
++          "detected": true,
++          "delay_hours": 34.0,
++          "severity_at_detection": 0.301
++        },
++        {
++          "turbine": 3,
++          "onset_day": 95.41,
++          "ramp_days": 6.82,
++          "detected": true,
++          "delay_hours": 58.0,
++          "severity_at_detection": 0.358
++        }
++      ],
++      "drivetrain_bearing": [
++        {
++          "turbine": 6,
++          "onset_day": 101.66,
++          "ramp_days": 8.47,
++          "detected": true,
++          "delay_hours": 73.0,
++          "severity_at_detection": 0.362
++        },
++        {
++          "turbine": 10,
++          "onset_day": 107.35,
++          "ramp_days": 5.95,
++          "detected": true,
++          "delay_hours": 34.0,
++          "severity_at_detection": 0.245
++        }
++      ],
++      "pitch_misalignment": [
++        {
++          "turbine": 7,
++          "onset_day": 105.86,
++          "ramp_days": 8.67,
++          "detected": true,
++          "delay_hours": 119.0,
++          "severity_at_detection": 0.575
++        },
++        {
++          "turbine": 9,
++          "onset_day": 95.09,
++          "ramp_days": 9.82,
++          "detected": true,
++          "delay_hours": 131.0,
++          "severity_at_detection": 0.561
++        }
++      ],
++      "gearbox_bearing": [
++        {
++          "turbine": 15,
++          "onset_day": 92.54,
++          "ramp_days": 7.33,
++          "detected": true,
++          "delay_hours": 97.0,
++          "severity_at_detection": 0.559
++        },
++        {
++          "turbine": 16,
++          "onset_day": 104.46,
++          "ramp_days": 6.66,
++          "detected": true,
++          "delay_hours": 108.0,
++          "severity_at_detection": 0.679
++        }
++      ],
++      "yaw_misalignment": [
++        {
++          "turbine": 17,
++          "onset_day": 91.89,
++          "ramp_days": 6.8,
++          "detected": false,
++          "delay_hours": null,
++          "severity_at_detection": null
++        },
++        {
++          "turbine": 23,
++          "onset_day": 88.88,
++          "ramp_days": 4.93,
++          "detected": false,
++          "delay_hours": null,
++          "severity_at_detection": null
++        }
++      ],
++      "generator_winding": [
++        {
++          "turbine": 18,
++          "onset_day": 89.28,
++          "ramp_days": 8.97,
++          "detected": true,
++          "delay_hours": 35.0,
++          "severity_at_detection": 0.166
++        },
++        {
++          "turbine": 19,
++          "onset_day": 100.63,
++          "ramp_days": 8.55,
++          "detected": true,
++          "delay_hours": 28.0,
++          "severity_at_detection": 0.142
++        }
++      ]
++    },
++    "training": {
++      "epochs": 20,
++      "train_loss": 0.0002,
++      "val_loss": 0.00025
++    },
++    "params": 7296
++  },
++  "reference_mahalanobis": {
++    "model": "Mahalanobis distance (linear reference)",
++    "auroc": 0.8698,
++    "threshold": 106.792763,
++    "pointwise": {
++      "precision": 0.9987,
++      "recall": 0.4807,
++      "f1": 0.649
++    },
++    "healthy_turbine_hourly_fpr": 0.0004,
++    "false_alarm_events_per_100_turbine_days": 0.714,
++    "events_detected": "11/12",
++    "median_detection_delay_hours": 116.0,
++    "events": {
++      "rotor_imbalance": [
++        {
++          "turbine": 0,
++          "onset_day": 91.79,
++          "ramp_days": 4.78,
++          "detected": true,
++          "delay_hours": 40.0,
++          "severity_at_detection": 0.353
++        },
++        {
++          "turbine": 3,
++          "onset_day": 95.41,
++          "ramp_days": 6.82,
++          "detected": true,
++          "delay_hours": 92.0,
++          "severity_at_detection": 0.566
++        }
++      ],
++      "drivetrain_bearing": [
++        {
++          "turbine": 6,
++          "onset_day": 101.66,
++          "ramp_days": 8.47,
++          "detected": true,
++          "delay_hours": 116.0,
++          "severity_at_detection": 0.573
++        },
++        {
++          "turbine": 10,
++          "onset_day": 107.35,
++          "ramp_days": 5.95,
++          "detected": true,
++          "delay_hours": 38.0,
++          "severity_at_detection": 0.273
++        }
++      ],
++      "pitch_misalignment": [
++        {
++          "turbine": 7,
++          "onset_day": 105.86,
++          "ramp_days": 8.67,
++          "detected": true,
++          "delay_hours": 284.0,
++          "severity_at_detection": 1.0
++        },
++        {
++          "turbine": 9,
++          "onset_day": 95.09,
++          "ramp_days": 9.82,
++          "detected": true,
++          "delay_hours": 528.0,
++          "severity_at_detection": 1.0
++        }
++      ],
++      "gearbox_bearing": [
++        {
++          "turbine": 15,
++          "onset_day": 92.54,
++          "ramp_days": 7.33,
++          "detected": true,
++          "delay_hours": 195.0,
++          "severity_at_detection": 1.0
++        },
++        {
++          "turbine": 16,
++          "onset_day": 104.46,
++          "ramp_days": 6.66,
++          "detected": true,
++          "delay_hours": 173.0,
++          "severity_at_detection": 1.0
++        }
++      ],
++      "yaw_misalignment": [
++        {
++          "turbine": 17,
++          "onset_day": 91.89,
++          "ramp_days": 6.8,
++          "detected": false,
++          "delay_hours": null,
++          "severity_at_detection": null
++        },
++        {
++          "turbine": 23,
++          "onset_day": 88.88,
++          "ramp_days": 4.93,
++          "detected": true,
++          "delay_hours": 695.0,
++          "severity_at_detection": 1.0
++        }
++      ],
++      "generator_winding": [
++        {
++          "turbine": 18,
++          "onset_day": 89.28,
++          "ramp_days": 8.97,
++          "detected": true,
++          "delay_hours": 33.0,
++          "severity_at_detection": 0.157
++        },
++        {
++          "turbine": 19,
++          "onset_day": 100.63,
++          "ramp_days": 8.55,
++          "detected": true,
++          "delay_hours": 28.0,
++          "severity_at_detection": 0.142
++        }
++      ]
++    }
++  },
++  "seed": 42,
++  "runtime_s": 18.6
++}
+\ No newline at end of file
+diff --git a/results/model6_seed_sweep.json b/results/model6_seed_sweep.json
+new file mode 100644
+index 0000000..0eedef1
+--- /dev/null
++++ b/results/model6_seed_sweep.json
+@@ -0,0 +1,43 @@
++{
++  "seeds": [
++    1,
++    2,
++    3,
++    4,
++    5,
++    42
++  ],
++  "note": "each seed regenerates the farm (fault turbines, onsets, ramps, noise) and the network init; same code, python model.py with SEED changed",
++  "summary": {
++    "model6": {
++      "auroc_mean": 0.885,
++      "auroc_sd": 0.016,
++      "auroc_min": 0.8651,
++      "f1_mean": 0.782,
++      "f1_sd": 0.038,
++      "events_detected": "68/72",
++      "median_delay_h_all_events": 56.5,
++      "false_alarm_events_per_100_turbine_days_mean": 0.04
++    },
++    "scaffold": {
++      "auroc_mean": 0.864,
++      "auroc_sd": 0.013,
++      "auroc_min": 0.8513,
++      "f1_mean": 0.702,
++      "f1_sd": 0.047,
++      "events_detected": "59/72",
++      "median_delay_h_all_events": 70.0,
++      "false_alarm_events_per_100_turbine_days_mean": 0.04
++    },
++    "mahalanobis": {
++      "auroc_mean": 0.877,
++      "auroc_sd": 0.009,
++      "auroc_min": 0.8689,
++      "f1_mean": 0.661,
++      "f1_sd": 0.059,
++      "events_detected": "63/72",
++      "median_delay_h_all_events": 95.0,
++      "false_alarm_events_per_100_turbine_days_mean": 1.032
++    }
++  }
++}
+\ No newline at end of file
+-- 
+2.39.5
+

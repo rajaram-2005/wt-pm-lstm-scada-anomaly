@@ -1,61 +1,53 @@
-# ConvLSTM Wear Prognostics
-
-> **Category:** RUL Prognostics  
-> **Platform adapter:** `m02-convlstm-wear`  
-> **Status:** partial
+# CONVLSTM-WEAR-PROGNOSTICS
+> **Category:** RUL Prognostics
 
 ## Description
-
 Convolutional LSTM extracting joint spatiotemporal representations for continuous mechanical degradation tracking.
 
-This repository stays independently usable (`python model.py`). The unified
-**wt-pm** platform wraps the original `model.py` through adapter `m02-convlstm-wear` —
-it does not replace or fork this code.
+**Model 4** extends the original scaffold (2-layer ConvLSTM) to a **4-layer stack** for deeper temporal-hierarchical wear feature extraction:
 
-## Platform contract
-
-| | |
-|---|---|
-| Input (adapter view) | windows → channel-recurrence images (not 64×64 FEA wear maps) |
-| Output (WTDataSchema) | rul_hours |
-| Integration role | Spatiotemporal RUL point estimate fused with m17 then refined by m16. Marked partial: upstream expects wear maps that no repo ships. |
-
-Shared record fields: `timestamp`, `turbine_id`, `subsystem`, `prediction`,
-`probability`, `anomaly_score`, `degradation_state`, `RUL`, `uncertainty`,
-`model_id`, `inference_time`, `explanation`.
-
-## Hermes agent + explainable AI
-
-The platform Hermes loop (Thought → Action → Observation) may call this
-model as a **tool**. Observations are the adapter’s real outputs — never
-invented. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals;
-the Hermes trace is the operator-readable explanation.
-
-```bash
-pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
-wt-pm inspect          # see m02-convlstm-wear availability
-wt-pm agent --days 8   # Hermes trace including this model when routed
-wt-pm serve --port 8100
 ```
+Input (10, 16, 16, 1)   # 10-frame window of 16x16 wear maps
+  └─ ConvLSTM2D(32) + BatchNorm     # fine spatiotemporal features
+  └─ ConvLSTM2D(48) + BatchNorm     # mid-level degradation patterns
+  └─ ConvLSTM2D(48) + BatchNorm     # global wear-rate representation
+  └─ ConvLSTM2D(32) + BatchNorm     # regression-ready summary
+  └─ Flatten → Dense(64, relu) → Dense(1)   # normalized RUL output
+```
+
+- **Optimizer:** Adam (1e-3), MSE loss, MAE tracked
+- **Callbacks:** EarlyStopping (patience 3, restore best) + ReduceLROnPlateau
+- **Data:** synthetic accelerated-wear trajectory rendered as 2-D wear maps; sliding windows (stride 2) with **chronological** train/val/test split (15% / 20%) to prevent time leakage
 
 ## Structure
-
 ```
-├── model.py           # Core architecture / training entry (unchanged)
-├── requirements.txt
-├── .gitignore
-└── README.md
-```
-
-## Setup (standalone)
-
-```bash
-pip install -r requirements.txt
-python model.py
+├── model.py           # Model 4 architecture + data synthesis + training script
+├── requirements.txt   # Dependencies
+├── results/           # Run outputs (metrics JSON, best .h5 weights) — created at runtime
+├── .gitignore         # Environment and data exclusions
+└── README.md          # Project overview
 ```
 
-## Honest limits
+## Setup & Execution
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-Architecture stub unless noted complete. No trained weights or field
-datasets ship here. Metrics on the platform are held-out **simulator**
-records (fidelity rung 1), not certified asset performance.
+2. Run Model 4 (data synthesis → training → evaluation):
+   ```bash
+   python model.py
+   ```
+
+Outputs:
+- Printed evaluation table (RMSE / MAE / R² on train/val/test, in cycle units)
+- `results/model4_metrics.json` — full metrics summary
+- `results/model4_weights.h5` — best weights (excluded from git via `.gitignore`)
+
+## Model Info
+- **Repo name:** `wt-pm-convlstm-wear-prognostics`
+- **Category:** RUL Prognostics
+- **Model:** 4-layer ConvLSTM (~0.96M parameters)
+- **Dependencies:** `tensorflow numpy pandas`
+
+> Scaffold generated locally for inspection — no GitHub API call made.

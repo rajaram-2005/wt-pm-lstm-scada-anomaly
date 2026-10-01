@@ -1,0 +1,42 @@
+From 3afecc70e23eaa87f803f6fc0cabd2952883d84d Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 12:34:17 +0000
+Subject: [PATCH] Fix landing page: m08-contrastive-ssl card + GitHub link
+
+- Root and docs/ landing pages now show the correct platform adapter id,
+  'partial (upstream placeholder loss; adapter adds full NT-Xent)' status,
+  file list, and a working View-on-GitHub button.
+---
+ docs/index.html | 2 +-
+ index.html      | 2 +-
+ 2 files changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/docs/index.html b/docs/index.html
+index d4d0967..aea2505 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -34,7 +34,7 @@
+       </div>
+       <a class="btn" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture only — no trained weights or field datasets ship here. Embeddings are L2-normalized projections; platform runs use simulator surrogate waveforms.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Encoder and projection head defined here. The platform adapter supplies the full negative-pair NT-Xent contrastive loss during training.</p>
+   </div>
+ </body>
+ </html>
+diff --git a/index.html b/index.html
+index d4d0967..aea2505 100644
+--- a/index.html
++++ b/index.html
+@@ -34,7 +34,7 @@
+       </div>
+       <a class="btn" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture only — no trained weights or field datasets ship here. Embeddings are L2-normalized projections; platform runs use simulator surrogate waveforms.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Encoder and projection head defined here. The platform adapter supplies the full negative-pair NT-Xent contrastive loss during training.</p>
+   </div>
+ </body>
+ </html>
+-- 
+2.39.5
+
