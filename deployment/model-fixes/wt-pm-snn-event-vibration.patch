@@ -1,0 +1,175 @@
+From f782ac9506404cae100a262e162aef4c63659b7f Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 13:02:06 +0000
+Subject: [PATCH] Wire model 19 into the WT-PM platform: platform-aware README,
+ landing-page card + GitHub link
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- README.md: full platform-aware description — adapter `m07-snn-vibration`, status (integrated (surrogate events)), model entry points, platform contract (WTDataSchema), Hermes/XAI role and honest limits.
+- index.html and docs/index.html: platform-adapter card, status, files list, and a working 'View on GitHub' link (was placeholder '#'); honest footer replaces the scaffold note.
+- model.py, requirements.txt untouched; the repo stays independently runnable (`python model.py`).
+---
+ README.md       | 90 +++++++++++++++++++++++++++++++++++++++----------
+ docs/index.html | 10 +++---
+ index.html      | 10 +++---
+ 3 files changed, 84 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index 29d6d80..0313a69 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,85 @@
+-# SNN-EVENT-VIBRATION
++# SNN Event Vibration
++
+ > **Category:** Edge AI  
++> **Platform adapter:** `m07-snn-vibration`  
++> **Status:** integrated (surrogate events)
+ 
+ ## Description
++
+ Spiking Neural Network processing asynchronous event-based threshold spikes for ultra-low power vibration monitoring.
+ 
++This is model **m07** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays
++independently usable (`python model.py`). The unified **wt-pm** platform wraps the original
++`model.py` through adapter `m07-snn-vibration` — it does not replace or fork this code.
++
++## Model
++
++`EventSNN(input_size=64, hidden=128, output_size=4)` in [`model.py`](model.py):
++
++| Block | Layers |
++|---|---|
++| Input stage | `nn.Linear(input_size, hidden)` → `snn.Leaky(beta=0.9)` LIF membrane |
++| Output stage | `nn.Linear(hidden, output_size)` → `snn.Leaky(beta=0.9)` |
++| Forward | returns output spikes + both membrane states (recurrent stepping) |
++
++If `snntorch` is not installed the repo prints an install hint and defines no class — the
++platform adapter then reports itself unavailable.
++
+ ## Structure
++
+ ```
+-├── model.py           # Core neural network architecture / training script
++├── model.py           # Architecture / training entry point (unchanged by the platform)
+ ├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++├── .gitignore         # Environment, data and model-artifact exclusions
++├── README.md          # Project overview (this file)
++├── index.html         # Landing page (GitHub Pages)
++└── docs/
++    └── index.html     # Copy of the landing page
++```
++
++## Setup (standalone)
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++`python model.py` defines `EventSNN` if snntorch is installed, otherwise prints an install hint. It loads no data and trains nothing.
++
++To use the model from your own code, import from `model.py` directly — the entry points above
++are the exact symbols the platform adapter calls.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | event-encoded vibration windows — delta/threshold spike bins from surrogate waveforms |
++| Output (WTDataSchema) | prediction, probability — spike-rate logits as class evidence |
++| Integration role | Low-power vibration voter (drivetrain). Hermes `diagnose` tool. |
++| Deployment / fallback | cloud, edge-CPU, edge-GPU · falls back to `m01-1dcnn-bearing` |
++
++Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
++this adapter also fills `prediction`, `probability`, `subsystem` (drivetrain), `inference_time_ms` and `explanation`. The remaining optional fields (`anomaly_score`, `degradation_state`, `rul_hours`, `uncertainty`) are left to other models.
++
++## Hermes agent + explainable AI
++
++The SNN's class vote counts as one drivetrain vote in Hermes `diagnose`; observations are the adapter's real outputs — never invented. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals (SHAP is computed on the tree classifiers, not on this SNN).
++
++To run this model inside the platform (Python ≥ 3.10):
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m07-snn-vibration should report "available": true
++wt-pm serve --port 8100                  # HTTP API, e.g. GET /health and GET /registry
++```
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md)
++and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-snn-event-vibration`
+-- **Category:** Edge AI
+-- **Dependencies:** `snntorch torch numpy`
++## Honest limits
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++- Event encodings are built from **surrogate** vibration waveforms synthesised from the 10-minute RMS channel (flagged `vibration_is_surrogate=True`); real DAQ recordings would slot in unchanged.
++- Optional dependency: without `snntorch` the model reports unavailable and the router falls back to the 1D-CNN.
++- Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified asset performance.
+diff --git a/docs/index.html b/docs/index.html
+index a0087bf..c2f32a2 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>snntorch torch numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m07-snn-vibration</code></div>
++        <div><strong>Status</strong><br>integrated (surrogate events)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Event encoding uses surrogate vibration windows flagged as such; the adapter reports unavailable (falling back to the 1D-CNN) if snntorch is missing.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index a0087bf..c2f32a2 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>snntorch torch numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m07-snn-vibration</code></div>
++        <div><strong>Status</strong><br>integrated (surrogate events)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Event encoding uses surrogate vibration windows flagged as such; the adapter reports unavailable (falling back to the 1D-CNN) if snntorch is missing.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+

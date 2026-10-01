@@ -1,0 +1,168 @@
+From 07ce364c673c7e10a664bafb1028727ddc2c672d Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 13:02:06 +0000
+Subject: [PATCH] Wire model 22 into the WT-PM platform: platform-aware README,
+ landing-page card + GitHub link
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- README.md: full platform-aware description — adapter `m25-tinyml-safety`, status (integrated), model entry points, platform contract (WTDataSchema), Hermes/XAI role and honest limits.
+- index.html and docs/index.html: platform-adapter card, status, files list, and a working 'View on GitHub' link (was placeholder '#'); honest footer replaces the scaffold note.
+- model.py, requirements.txt untouched; the repo stays independently runnable (`python model.py`).
+---
+ README.md       | 83 ++++++++++++++++++++++++++++++++++++++-----------
+ docs/index.html | 10 +++---
+ index.html      | 10 +++---
+ 3 files changed, 77 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index deb1a24..192b358 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,78 @@
+-# TINYML-ESP32-SAFETY-RELAY
++# TinyML ESP32 Safety Relay
++
+ > **Category:** Edge AI  
++> **Platform adapter:** `m25-tinyml-safety`  
++> **Status:** integrated
+ 
+ ## Description
++
+ C++ exported TinyML decision trees for bare-metal execution on ESP32 microcontrollers triggering immediate safety trips.
+ 
++This is model **m25** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays
++independently usable (`python model.py`). The unified **wt-pm** platform wraps the original
++`model.py` through adapter `m25-tinyml-safety` — it does not replace or fork this code.
++
++## Model
++
++`export_esp32_header(X, y)` in [`model.py`](model.py) fits a depth-5
++`DecisionTreeClassifier` and uses **micromlgen**'s `port()` to emit `model.h` — a C++ header an
++ESP32 Arduino sketch can `#include` and call `predict()` on, with no Python at runtime.
++
+ ## Structure
++
+ ```
+-├── model.py           # Core neural network architecture / training script
++├── model.py           # Architecture / training entry point (unchanged by the platform)
+ ├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++├── .gitignore         # Environment, data and model-artifact exclusions
++├── README.md          # Project overview (this file)
++├── index.html         # Landing page (GitHub Pages)
++└── docs/
++    └── index.html     # Copy of the landing page
++```
++
++## Setup (standalone)
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++`python model.py` defines `export_esp32_header`; nothing is exported until features/labels are supplied. `requirements.txt` lists `scikit-learn micromlgen`.
++
++To use the model from your own code, import from `model.py` directly — the entry points above
++are the exact symbols the platform adapter calls.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | the safety-critical SCADA channels (overspeed, temperatures, vibration limits) |
++| Output (WTDataSchema) | prediction — TRIP / continue; extra['model_h'] — the exported C++ header |
++| Integration role | Safety gate: a pure-Python mirror of the same tree runs in-loop as the platform's last-word gate (`wt-pm edge` emits `model.h`). Hermes `safety` tool. |
++| Deployment / fallback | cloud, MCU, edge-CPU · scikit-learn + micromlgen · no fallback (it IS the gate) |
++
++Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
++this adapter also fills `prediction` (TRIP/continue), `inference_time_ms` and `explanation`. The remaining optional fields (`probability`, `anomaly_score`, `degradation_state`, `rul_hours`, `uncertainty`) are left to other models.
++
++## Hermes agent + explainable AI
++
++Hermes calls the `safety` tool; the gate's TRIP/continue decision and the hard limits it checked are quoted verbatim in the trace — never invented.
++
++To run this model inside the platform (Python ≥ 3.10):
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m25-tinyml-safety should report "available": true
++wt-pm serve --port 8100                  # HTTP API, e.g. GET /health and GET /registry
++```
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md)
++and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-tinyml-esp32-safety-relay`
+-- **Category:** Edge AI
+-- **Dependencies:** `scikit-learn micromlgen`
++## Honest limits
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++- Depth-5 tree, as in the repo: deliberately small enough to fit an ESP32, not to maximise accuracy.
++- The Python mirror and the exported C++ tree are the same fitted object; the platform verifies they agree.
++- Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified safety evidence.
+diff --git a/docs/index.html b/docs/index.html
+index 7a26f1c..32e52ca 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>scikit-learn micromlgen</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m25-tinyml-safety</code></div>
++        <div><strong>Status</strong><br>integrated</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Depth-5 tree exported to model.h via micromlgen for ESP32; a pure-Python mirror of the same tree runs in-loop as the platform's safety gate.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index 7a26f1c..32e52ca 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>scikit-learn micromlgen</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m25-tinyml-safety</code></div>
++        <div><strong>Status</strong><br>integrated</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Depth-5 tree exported to model.h via micromlgen for ESP32; a pure-Python mirror of the same tree runs in-loop as the platform's safety gate.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+

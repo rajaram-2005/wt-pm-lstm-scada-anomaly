@@ -1,0 +1,167 @@
+From 3dc3dc16ca6afb12d23b2a6688adb0a94bc7b63b Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 13:02:05 +0000
+Subject: [PATCH] Wire model 14 into the WT-PM platform: platform-aware README,
+ landing-page card + GitHub link
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- README.md: full platform-aware description — adapter `m17-mlp-rul`, status (integrated (proxy target)), model entry points, platform contract (WTDataSchema), Hermes/XAI role and honest limits.
+- index.html and docs/index.html: platform-adapter card, status, files list, and a working 'View on GitHub' link (was placeholder '#'); honest footer replaces the scaffold note.
+- model.py, requirements.txt untouched; the repo stays independently runnable (`python model.py`).
+---
+ README.md       | 82 ++++++++++++++++++++++++++++++++++++++-----------
+ docs/index.html | 10 +++---
+ index.html      | 10 +++---
+ 3 files changed, 76 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index 1b7cb30..580753d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,77 @@
+-# MLP-RUL-REGRESSION
++# MLP RUL Regression
++
+ > **Category:** RUL Prognostics  
++> **Platform adapter:** `m17-mlp-rul`  
++> **Status:** integrated (proxy target)
+ 
+ ## Description
++
+ Multi-Layer Perceptron baseline regressor mapping accumulated operating hours to component failure limits.
+ 
++This is model **m17** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays
++independently usable (`python model.py`). The unified **wt-pm** platform wraps the original
++`model.py` through adapter `m17-mlp-rul` — it does not replace or fork this code.
++
++## Model
++
++`train_mlp(csv_path="rul_data.csv", target="RUL")` in [`model.py`](model.py) builds a
++scikit-learn pipeline — `StandardScaler` → `MLPRegressor(hidden_layer_sizes=(128, 64),
++activation='relu', max_iter=500, seed 42)` — fits it on a CSV feature table and prints R².
++
+ ## Structure
++
+ ```
+-├── model.py           # Core neural network architecture / training script
++├── model.py           # Architecture / training entry point (unchanged by the platform)
+ ├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++├── .gitignore         # Environment, data and model-artifact exclusions
++├── README.md          # Project overview (this file)
++├── index.html         # Landing page (GitHub Pages)
++└── docs/
++    └── index.html     # Copy of the landing page
++```
++
++## Setup (standalone)
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++`python model.py` defines `train_mlp`; it loads no data until a CSV path is supplied. `requirements.txt` lists `scikit-learn pandas numpy`.
++
++To use the model from your own code, import from `model.py` directly — the entry points above
++are the exact symbols the platform adapter calls.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | tabular features + RUL **proxy** target (research mode only) |
++| Output (WTDataSchema) | rul_hours |
++| Integration role | The deliberately simple RUL baseline every other RUL model must beat; its predictions are fed to the particle filter (m16) as observations. |
++| Deployment / fallback | cloud, edge-CPU · scikit-learn · no fallback |
++
++Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
++this adapter also fills `rul_hours`, `inference_time_ms` and `explanation`. The remaining optional fields (`prediction`, `probability`, `anomaly_score`, `degradation_state`, `uncertainty`) are left to other models.
++
++## Hermes agent + explainable AI
++
++Hermes quotes the baseline's RUL estimate alongside the fancier estimators in its `rul` observations — never invented. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals.
++
++To run this model inside the platform (Python ≥ 3.10):
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m17-mlp-rul should report "available": true
++wt-pm serve --port 8100                  # HTTP API, e.g. GET /health and GET /registry
++```
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md)
++and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-mlp-rul-regression`
+-- **Category:** RUL Prognostics
+-- **Dependencies:** `scikit-learn pandas numpy`
++## Honest limits
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++- The RUL target is a **proxy** (time-to-next-fault-onset in the simulator); no run-to-failure field data exists, and every explanation says so.
++- Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified asset performance.
+diff --git a/docs/index.html b/docs/index.html
+index e5061b7..34355dd 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>scikit-learn pandas numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m17-mlp-rul</code></div>
++        <div><strong>Status</strong><br>integrated (proxy target)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">The deliberately simple RUL baseline; the target is a proxy (time-to-fault-onset in the simulator) and every explanation says so.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index e5061b7..34355dd 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>scikit-learn pandas numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m17-mlp-rul</code></div>
++        <div><strong>Status</strong><br>integrated (proxy target)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">The deliberately simple RUL baseline; the target is a proxy (time-to-fault-onset in the simulator) and every explanation says so.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+
