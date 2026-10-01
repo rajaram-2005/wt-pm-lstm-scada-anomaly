@@ -1,0 +1,168 @@
+From 07d353c0a43a9231779505b6179e406d30202202 Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 13:02:06 +0000
+Subject: [PATCH] Wire model 20 into the WT-PM platform: platform-aware README,
+ landing-page card + GitHub link
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- README.md: full platform-aware description — adapter `m12-svm-generator`, status (integrated (electrical specialist)), model entry points, platform contract (WTDataSchema), Hermes/XAI role and honest limits.
+- index.html and docs/index.html: platform-adapter card, status, files list, and a working 'View on GitHub' link (was placeholder '#'); honest footer replaces the scaffold note.
+- model.py, requirements.txt untouched; the repo stays independently runnable (`python model.py`).
+---
+ README.md       | 83 ++++++++++++++++++++++++++++++++++++++-----------
+ docs/index.html | 10 +++---
+ index.html      | 10 +++---
+ 3 files changed, 77 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index 54c31ad..6bb11e2 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,78 @@
+-# SVM-RBF-GENERATOR-STATOR
++# SVM-RBF Generator Stator
++
+ > **Category:** Component Fault Classification  
++> **Platform adapter:** `m12-svm-generator`  
++> **Status:** integrated (electrical specialist)
+ 
+ ## Description
++
+ Support Vector Machine with Radial Basis Function kernel for generator stator/rotor insulation fault separation.
+ 
++This is model **m12** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays
++independently usable (`python model.py`). The unified **wt-pm** platform wraps the original
++`model.py` through adapter `m12-svm-generator` — it does not replace or fork this code.
++
++## Model
++
++`build_svm(csv_path="generator.csv", target="stator_fault")` in [`model.py`](model.py) builds a
++scikit-learn pipeline — `StandardScaler` → `SVC(kernel='rbf', C=1.0, gamma='scale',
++probability=True, class_weight='balanced')` — and fits it on a CSV feature table.
++
+ ## Structure
++
+ ```
+-├── model.py           # Core neural network architecture / training script
++├── model.py           # Architecture / training entry point (unchanged by the platform)
+ ├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++├── .gitignore         # Environment, data and model-artifact exclusions
++├── README.md          # Project overview (this file)
++├── index.html         # Landing page (GitHub Pages)
++└── docs/
++    └── index.html     # Copy of the landing page
++```
++
++## Setup (standalone)
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++`python model.py` defines `build_svm`; it loads no data until a CSV path is supplied. `requirements.txt` lists `scikit-learn pandas numpy`.
++
++To use the model from your own code, import from `model.py` directly — the entry points above
++are the exact symbols the platform adapter calls.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | electrical features — generator/converter channels + labels (research mode) |
++| Output (WTDataSchema) | prediction, probability |
++| Integration role | Generator/converter electrical-fault specialist (WHAT/WHERE). Hermes `diagnose` tool. |
++| Deployment / fallback | cloud · falls back to `m11-xgboost-tabular` |
++
++Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
++this adapter also fills `prediction`, `probability`, `subsystem` (generator/converter), `inference_time_ms` and `explanation`. The remaining optional fields (`anomaly_score`, `degradation_state`, `rul_hours`, `uncertainty`) are left to other models.
++
++## Hermes agent + explainable AI
++
++The SVM's binary electrical vote is one input to Hermes `diagnose`; records without electrical-fault examples are skipped, not guessed. Observations are the adapter's real outputs — never invented. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals.
++
++To run this model inside the platform (Python ≥ 3.10):
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m12-svm-generator should report "available": true
++wt-pm serve --port 8100                  # HTTP API, e.g. GET /health and GET /registry
++```
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md)
++and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-svm-rbf-generator-stator`
+-- **Category:** Component Fault Classification
+-- **Dependencies:** `scikit-learn pandas numpy`
++## Honest limits
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++- The platform restricts the adapter to generator/converter electrical features (stator focus); other channels stay with the tabular ensemble.
++- `class_weight='balanced'` is upstream; the adapter keeps it — rare electrical faults are deliberately not majority-voted away.
++- Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified asset performance.
+diff --git a/docs/index.html b/docs/index.html
+index 2fcf639..55a861a 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>scikit-learn pandas numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m12-svm-generator</code></div>
++        <div><strong>Status</strong><br>integrated (electrical specialist)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Binary electrical-fault detector on generator/converter channels; skips records without electrical-fault examples rather than guessing.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index 2fcf639..55a861a 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>scikit-learn pandas numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m12-svm-generator</code></div>
++        <div><strong>Status</strong><br>integrated (electrical specialist)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Binary electrical-fault detector on generator/converter channels; skips records without electrical-fault examples rather than guessing.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+

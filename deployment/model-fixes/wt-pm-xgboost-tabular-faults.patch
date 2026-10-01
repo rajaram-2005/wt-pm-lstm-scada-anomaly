@@ -1,0 +1,168 @@
+From 8e6f3f290137278923486618256e70a56e621dbe Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 13:02:06 +0000
+Subject: [PATCH] Wire model 25 into the WT-PM platform: platform-aware README,
+ landing-page card + GitHub link
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- README.md: full platform-aware description — adapter `m11-xgboost-tabular`, status (integrated (primary tabular voter)), model entry points, platform contract (WTDataSchema), Hermes/XAI role and honest limits.
+- index.html and docs/index.html: platform-adapter card, status, files list, and a working 'View on GitHub' link (was placeholder '#'); honest footer replaces the scaffold note.
+- model.py, requirements.txt untouched; the repo stays independently runnable (`python model.py`).
+---
+ README.md       | 83 ++++++++++++++++++++++++++++++++++++++-----------
+ docs/index.html | 10 +++---
+ index.html      | 10 +++---
+ 3 files changed, 77 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index 90e599f..3247a8e 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,78 @@
+-# XGBOOST-TABULAR-FAULTS
++# XGBoost Tabular Faults
++
+ > **Category:** Component Fault Classification  
++> **Platform adapter:** `m11-xgboost-tabular`  
++> **Status:** integrated (primary tabular voter)
+ 
+ ## Description
++
+ Gradient boosted decision trees for real-time multi-class component state classification using structured sensor features.
+ 
++This is model **m11** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays
++independently usable (`python model.py`). The unified **wt-pm** platform wraps the original
++`model.py` through adapter `m11-xgboost-tabular` — it does not replace or fork this code.
++
++## Model
++
++`train_xgboost(csv_path="features.csv", target="fault_label")` in [`model.py`](model.py)
++fits an `XGBClassifier` (300 trees, depth 6, learning rate 0.05, subsample 0.8, `mlogloss`)
++on a stratified 80/20 split of a CSV feature table and prints the classification report.
++
+ ## Structure
++
+ ```
+-├── model.py           # Core neural network architecture / training script
++├── model.py           # Architecture / training entry point (unchanged by the platform)
+ ├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++├── .gitignore         # Environment, data and model-artifact exclusions
++├── README.md          # Project overview (this file)
++├── index.html         # Landing page (GitHub Pages)
++└── docs/
++    └── index.html     # Copy of the landing page
++```
++
++## Setup (standalone)
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++`python model.py` defines `train_xgboost`; it loads no data until a CSV path is supplied. `requirements.txt` lists `xgboost scikit-learn pandas numpy`.
++
++To use the model from your own code, import from `model.py` directly — the entry points above
++are the exact symbols the platform adapter calls.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | tabular features + labels (research mode) |
++| Output (WTDataSchema) | prediction, probability |
++| Integration role | Primary tabular fault voter (WHAT/WHERE) and the SHAP TreeExplainer source for the XAI engine. Hermes `diagnose` tool. |
++| Deployment / fallback | cloud, edge-CPU · falls back to `m10-random-forest` |
++
++Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
++this adapter also fills `prediction`, `probability`, `subsystem`, `inference_time_ms` and `explanation`. The remaining optional fields (`anomaly_score`, `degradation_state`, `rul_hours`, `uncertainty`) are left to other models.
++
++## Hermes agent + explainable AI
++
++The platform's Hermes loop uses this classifier's vote in `diagnose` and its fitted booster in `explain` (via m21 SHAP). Observations are the adapter's real outputs — never invented; the Hermes trace is the operator-readable explanation.
++
++To run this model inside the platform (Python ≥ 3.10):
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m11-xgboost-tabular should report "available": true
++wt-pm serve --port 8100                  # HTTP API, e.g. GET /health and GET /registry
++```
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md)
++and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-xgboost-tabular-faults`
+-- **Category:** Component Fault Classification
+-- **Dependencies:** `xgboost scikit-learn pandas numpy`
++## Honest limits
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++- Labels come from the simulator's fault families (research mode); production runs vote without labels.
++- `use_label_encoder=False` pins the legacy XGBoost API; the adapter tolerates both old and new xgboost releases.
++- Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified asset performance.
+diff --git a/docs/index.html b/docs/index.html
+index 9b512d6..7924a71 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>xgboost scikit-learn pandas numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m11-xgboost-tabular</code></div>
++        <div><strong>Status</strong><br>integrated (primary tabular voter)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Primary tabular fault voter; its fitted booster is the SHAP TreeExplainer source behind the Hermes explain tool.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index 9b512d6..7924a71 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>xgboost scikit-learn pandas numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m11-xgboost-tabular</code></div>
++        <div><strong>Status</strong><br>integrated (primary tabular voter)</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Primary tabular fault voter; its fitted booster is the SHAP TreeExplainer source behind the Hermes explain tool.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+

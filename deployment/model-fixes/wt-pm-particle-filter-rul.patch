@@ -1,0 +1,176 @@
+From 04d26389e45885ba48a6f5d15c9a827b0a77552e Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Thu, 1 Oct 2026 13:02:05 +0000
+Subject: [PATCH] Wire model 15 into the WT-PM platform: platform-aware README,
+ landing-page card + GitHub link
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+- README.md: full platform-aware description — adapter `m16-particle-filter-rul`, status (complete), model entry points, platform contract (WTDataSchema), Hermes/XAI role and honest limits.
+- index.html and docs/index.html: platform-adapter card, status, files list, and a working 'View on GitHub' link (was placeholder '#'); honest footer replaces the scaffold note.
+- model.py, requirements.txt untouched; the repo stays independently runnable (`python model.py`).
+---
+ README.md       | 91 +++++++++++++++++++++++++++++++++++++++----------
+ docs/index.html | 10 +++---
+ index.html      | 10 +++---
+ 3 files changed, 85 insertions(+), 26 deletions(-)
+
+diff --git a/README.md b/README.md
+index 20bc7f8..643e13d 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,86 @@
+-# PARTICLE-FILTER-RUL
++# Particle Filter RUL
++
+ > **Category:** RUL Prognostics  
++> **Platform adapter:** `m16-particle-filter-rul`  
++> **Status:** complete
+ 
+ ## Description
++
+ Stochastic Particle Filtering fused with Deep Neural Networks to update probabilistic RUL decay distributions continuously.
+ 
++This is model **m16** of the WT-PM wind-turbine predictive-maintenance suite. The repository stays
++independently usable (`python model.py`). The unified **wt-pm** platform wraps the original
++`model.py` through adapter `m16-particle-filter-rul` — it does not replace or fork this code.
++
++## Model
++
++`ParticleFilterRUL(num_particles=1000, init_rul=1000)` in [`model.py`](model.py) is a
++**complete, pure-numpy** sequential Monte Carlo filter:
++
++| Method | What it does |
++|---|---|
++| `predict(degradation_rate, noise)` | propagates every particle down by the decay rate + Gaussian noise, floored at 0 |
++| `update(observed_rul, obs_noise)` | Gaussian likelihood reweighting + normalisation |
++| `resample()` | multinomial resampling, weights reset uniform |
++| `estimate()` | weighted mean RUL |
++
++`python model.py` defines the class; it loads no data.
++
+ ## Structure
++
+ ```
+-├── model.py           # Core neural network architecture / training script
++├── model.py           # Architecture / training entry point (unchanged by the platform)
+ ├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++├── .gitignore         # Environment, data and model-artifact exclusions
++├── README.md          # Project overview (this file)
++├── index.html         # Landing page (GitHub Pages)
++└── docs/
++    └── index.html     # Copy of the landing page
++```
++
++## Setup (standalone)
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++`python model.py` defines `ParticleFilterRUL`; it loads no data. Despite `requirements.txt` listing `scipy`/`torch`, `model.py` itself only imports numpy.
++
++To use the model from your own code, import from `model.py` directly — the entry points above
++are the exact symbols the platform adapter calls.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | RUL observations from sibling estimators (m17 MLP, m02 ConvLSTM) + degradation rate from m15 |
++| Output (WTDataSchema) | rul_hours, uncertainty — the full particle posterior |
++| Integration role | RUL fusion core (HOW LONG): consumes sibling RUL estimates as observations and reports a distribution, not just a point. |
++| Deployment / fallback | cloud, edge-CPU · numpy only · no fallback |
++
++Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
++this adapter also fills `rul_hours`, `uncertainty`, `inference_time_ms` and `explanation`. The remaining optional fields (`prediction`, `probability`, `anomaly_score`, `degradation_state`) are left to other models.
++
++## Hermes agent + explainable AI
++
++Hermes reports the filter's posterior mean and spread in its `rul` observations — never invented. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals; the Hermes trace is the operator-readable explanation.
++
++To run this model inside the platform (Python ≥ 3.10):
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m16-particle-filter-rul should report "available": true
++wt-pm serve --port 8100                  # HTTP API, e.g. GET /health and GET /registry
++```
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md)
++and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-particle-filter-rul`
+-- **Category:** RUL Prognostics
+-- **Dependencies:** `numpy scipy torch`
++## Honest limits
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++- The filter is fed **sibling RUL estimates**, never ground truth (which production would not have).
++- The platform adds an underflow guard around the likelihood weighting; the repo's math is otherwise used as-is.
++- Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified asset performance.
+diff --git a/docs/index.html b/docs/index.html
+index 1c4e3eb..0fbd597 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>numpy scipy torch</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m16-particle-filter-rul</code></div>
++        <div><strong>Status</strong><br>complete</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Complete pure-numpy filter; consumes sibling RUL estimates as observations — never ground truth — and reports a full posterior, not just a point.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+diff --git a/index.html b/index.html
+index 1c4e3eb..0fbd597 100644
+--- a/index.html
++++ b/index.html
+@@ -28,11 +28,13 @@
+       <code>python model.py</code>
+       <div class="grid">
+         <div><strong>Dependencies</strong><br><code>numpy scipy torch</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
++        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
++        <div><strong>Platform adapter</strong><br><code>m16-particle-filter-rul</code></div>
++        <div><strong>Status</strong><br>complete</div>
+       </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
++      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">View on GitHub</a>
+     </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
++    <p style="margin-top:24px;font-size:12px;color:#64748b">Complete pure-numpy filter; consumes sibling RUL estimates as observations — never ground truth — and reports a full posterior, not just a point.</p>
+   </div>
+ </body>
+-</html>
+\ No newline at end of file
++</html>
+-- 
+2.39.5
+
