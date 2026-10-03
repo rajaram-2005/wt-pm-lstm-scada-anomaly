@@ -7,28 +7,26 @@ run Python, train models, receive SCADA uploads, or replace the Render API.
 The website links to the separate Render dashboard and its actual model health.
 Publishing this site does not make more models available on Render.
 
-## One-time branch authorization (repository administrator)
+## Deployment path (`main`)
 
-The Pages environment currently allows `main` and `gh-pages`. To publish the
-prepared update from this session without pushing to those branches:
+The `github-pages` environment allows `main` and `gh-pages` as deployment
+branches, with **Settings → Pages** configured to deploy from **GitHub Actions**.
+Merging a pull request into `main` automatically runs `.github/workflows/pages.yml`
+(`build` followed by `deploy`) and publishes the site without needing extra
+branch rules.
 
-1. Open repository **Settings → Environments → github-pages**.
-2. Under **Deployment branches and tags → Selected branches and tags**, add a
-   **Branch** rule for `arena/01a1001d-wt-pm-lstm-scada-anomaly`.
-3. Keep the existing rules and protection settings; do not enable all branches.
-4. Under **Settings → Pages**, keep the source as **GitHub Actions** (already set).
-
-The integration could read these settings but received HTTP 403 when attempting
-to add the exact branch rule. An administrator must do that step.
-
-## Publish
-
-After authorization, open **Actions → pages → Run workflow** and choose
-`arena/01a1001d-wt-pm-lstm-scada-anomaly`. Or use:
+To trigger a manual redeploy from `main`:
 
 ```bash
-gh workflow run pages.yml --ref arena/01a1001d-wt-pm-lstm-scada-anomaly
+gh workflow run pages.yml --ref main
 ```
+
+To deploy from a non-`main` branch via `workflow_dispatch`, a repository
+administrator must first add that branch under **Settings → Environments →
+github-pages → Deployment branches and tags** (the session integration receives
+HTTP 403 on the environment branch-policy API).
+
+## What the workflow stages and verifies
 
 The workflow stages `docs/launch/` plus `docs/ecosystem.html` — the launch page,
 the pitch, the ecosystem graph, the merged `all-models.html` index and the 25
@@ -36,13 +34,11 @@ model pages (`model-01-…` … `model-25-…`, all rendered from
 `deployment/models.catalog.json`) — checks local links/assets, verifies that all
 25 pages agree with the catalog, uploads the site and deploys with
 `actions/deploy-pages`.
-Pull requests only build; manual publishing is limited to `main` and the exact
-session branch. It does not push to `main` or `gh-pages`.
+Pull requests run the `build` job (including `check_pages.py` and
+`check_ecosystem.py --site _site --strict`); pushes to `main` also run `deploy`.
 
-A successful build alone is **not** proof of publication. Confirm the **deploy**
-job succeeds and the live homepage contains **Open dashboard on Render** before
-calling the update published. If the deploy job is rejected by a branch policy,
-check the environment rule above.
+Confirm the **deploy** job succeeds and the live site serves `/`,
+`/all-models.html`, `/ecosystem.html`, and `/model-01-…` through `/model-25-…`.
 
 ## Local static check
 
