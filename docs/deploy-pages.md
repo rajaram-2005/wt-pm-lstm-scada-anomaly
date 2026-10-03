@@ -5,7 +5,10 @@ Public URL: https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/
 Pages hosts the launch site, pitch, architecture explorer and media. It cannot
 run Python, train models, receive SCADA uploads, or replace the Render API.
 The website links to the separate Render dashboard and its actual model health.
-Publishing this site does not make more models available on Render.
+Publishing this site does not make more models available on Render. For adding a
+private, authenticated backend to a static site, follow the
+[SCADA/website integration protocol](SCADA_WEBSITE_INTEGRATION_PROTOCOL.md);
+do not upload plant data to the public research demo.
 
 ## Deployment path (`main`)
 

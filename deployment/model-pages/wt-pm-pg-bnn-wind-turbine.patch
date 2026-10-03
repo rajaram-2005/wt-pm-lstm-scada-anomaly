@@ -1,32 +1,19 @@
-From dcb83afd833621cd7e718a08b9106cc4b1be5dd3 Mon Sep 17 00:00:00 2001
+From 99598794bb81ef3ff36c2da4d19d81ece1ccbc22 Mon Sep 17 00:00:00 2001
 From: Rajaraman <rajaram-2005@users.noreply.github.com>
-Date: Sat, 3 Oct 2026 05:40:26 +0000
+Date: Sat, 3 Oct 2026 06:44:21 +0000
 Subject: [PATCH] Advanced-concepts page and platform wiring
 
-Generated from deployment/models.catalog.json in the reference repository, so
-this page agrees with the other 24 on collection numbering, adapter id, status,
-contract and honest limits.
-
-- README.md: collection position (both numbering schemes), architecture table,
-  advanced concepts with failure modes, platform contract, platform-layer
-  participation, cross-links to the other 24 pages, standalone + platform setup,
-  honest limits.
-- index.html and docs/index.html: the same content as a self-contained landing
-  page - no external CSS/JS/assets - with a working View on GitHub link and
-  links to all 25 repositories.
-- model.py and requirements.txt untouched; the repository stays independently
-  runnable.
 ---
- README.md       | 159 +++++++++++++++++++++++++++++++------
- docs/index.html | 203 +++++++++++++++++++++++++++++++++++++++---------
- index.html      | 203 +++++++++++++++++++++++++++++++++++++++---------
- 3 files changed, 470 insertions(+), 95 deletions(-)
+ README.md       | 160 +++++++++++++++++++++++++++++++------
+ docs/index.html | 204 +++++++++++++++++++++++++++++++++++++++---------
+ index.html      | 204 +++++++++++++++++++++++++++++++++++++++---------
+ 3 files changed, 473 insertions(+), 95 deletions(-)
 
 diff --git a/README.md b/README.md
-index 3cb16da..c110a9c 100644
+index 3cb16da..5475320 100644
 --- a/README.md
 +++ b/README.md
-@@ -1,31 +1,144 @@
+@@ -1,31 +1,145 @@
 -# PG-BNN-WIND-TURBINE
 -> **Category:** Physics-Informed Models  
 +# PG-BNN Physics-Guided Bayesian
@@ -61,8 +48,8 @@ index 3cb16da..c110a9c 100644
 +| Block | Detail |
 +|---|---|
 +| Bayesian body | BayesianLinear layers sampling weights per forward pass - variational inference over parameters |
-+| Physics constraint | Loss includes a P = tau * omega consistency term between predicted power, torque and rotor speed |
-+| Readout | Mean prediction plus MC-sampled variance; power residual feeds the anomaly score |
++| Physics constraint | Soft efficiency-adjusted mechanical-power penalty: P_electric ≈ 0.94 × τ × ω, with torque and power normalised in consistent kW units |
++| Readout | Monte-Carlo mean and epistemic weight spread; measured power, model residual and physics residual are returned as platform diagnostics |
 +
 +## Advanced concepts
 +
@@ -70,22 +57,22 @@ index 3cb16da..c110a9c 100644
 +
 +### Epistemic versus aleatoric
 +
-+A point prediction that is wrong is useless; a prediction with a wide interval because the operating point is novel is actionable. MC sampling over the weight posterior captures the epistemic part - uncertainty that shrinks as data arrives.
++Monte-Carlo sampling over the variational weight posterior estimates an epistemic component; a fixed sample bank makes repeated requests comparable. It is not aleatoric sensor noise, and neither the spread nor the approximate mean ± 1.96σ band guarantees calibrated coverage.
 +
 +### Soft physics constraints
 +
-+P = tau * omega is not enforced as a hard layer but as a penalty term. That keeps the model differentiable and lets the data override the constraint where the constraint is wrong - a trade the pages state openly.
++The loss applies a soft penalty around P_electric ≈ 0.94 × τ × ω using consistent kW scaling. The measured-minus-physics residual is also exposed at inference, so an operator can compare the data fit with the mechanical cross-check without treating either as ground truth.
 +
 +### Physics and statistics disagree usefully
 +
-+When the physics-guided branch is confident and the statistical detectors are not, the disagreement itself is evidence. Fusion treats m18 as an anomaly voter and an uncertainty source rather than an oracle.
++The adapter reports predicted power, measured-minus-predicted error, efficiency-adjusted mechanical power and epistemic spread. Fusion uses m18 as an uncertainty-aware anomaly voter; its diagnostics are observations, not an oracle or a calibrated fault probability.
 +
 +## Platform contract
 +
 +| | |
 +|---|---|
-+| Input (adapter view) | torque / rpm / power channels + features |
-+| Output (`WTDataSchema`) | anomaly_score + uncertainty |
++| Input (adapter view) | wind speed, ambient temperature, rotor speed, pitch, torque and measured power (the prediction target) |
++| Output (`WTDataSchema`) | WTDataSchema anomaly_score + uncertainty; /analyse physics.pg_bnn adds power prediction, MC spread and measured/model/physics residual diagnostics |
 +| Record format | `wt-pm.platform.v1` |
 +| Typical latency | 2500 ms |
 +| Deployment targets | cloud |
@@ -101,8 +88,8 @@ index 3cb16da..c110a9c 100644
 +| Layer | What this model does there |
 +|---|---|
 +| **Uncertainty** | Second of the two uncertainty emitters; enables inverse-variance weighting in the fusion engine |
-+| **Physics** | Receives constraints from the m19 digital twin and returns physics-consistent residuals |
-+| **Hermes** | anomaly tool with an explicit confidence attached to every observation |
++| **Physics** | Applies the efficiency-adjusted P=τω penalty during fitting and returns the measured-versus-physics residual under physics.pg_bnn |
++| **Hermes** | Hermes explain observations include the measured/predicted power, residuals and MC epistemic spread when m18 ran |
 +| **RUL** | Physics-guided uncertainty propagates into m16's RUL posterior |
 +
 +Layers are described once, in the catalog, and referenced by every model that participates in them: fusion, calibrated uncertainty, drift and data trust, explainability, physics constraints, the safety gate, the evaluation protocol and the Hermes agent.
@@ -152,6 +139,7 @@ index 3cb16da..c110a9c 100644
 +
 +- Variational approximation, not exact posterior inference
 +- Physics term is a soft penalty against the simulator's own physics
++- MC epistemic spread and the approximate mean ± 1.96σ band are not calibrated coverage intervals
 +
 +Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets and simulator fault labels. Results are comparable **within** this collection and are not field-validated turbine control.
 +
@@ -195,10 +183,10 @@ index 3cb16da..c110a9c 100644
 -> Scaffold generated locally for inspection — no GitHub API call made.
 +Part of the [WT-PM collection](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - 25 models, one contract. Generated from `deployment/models.catalog.json`.
 diff --git a/docs/index.html b/docs/index.html
-index e073670..a5cc5ac 100644
+index e073670..8bb22fe 100644
 --- a/docs/index.html
 +++ b/docs/index.html
-@@ -1,38 +1,169 @@
+@@ -1,38 +1,170 @@
  <!DOCTYPE html>
 -<html lang="en">
 -<head>
@@ -312,27 +300,27 @@ index e073670..a5cc5ac 100644
 +</ul>
 +<table>
 +<tr><th>Bayesian body</th><td>BayesianLinear layers sampling weights per forward pass - variational inference over parameters</td></tr>
-+<tr><th>Physics constraint</th><td>Loss includes a P = tau * omega consistency term between predicted power, torque and rotor speed</td></tr>
-+<tr><th>Readout</th><td>Mean prediction plus MC-sampled variance; power residual feeds the anomaly score</td></tr>
++<tr><th>Physics constraint</th><td>Soft efficiency-adjusted mechanical-power penalty: P_electric ≈ 0.94 × τ × ω, with torque and power normalised in consistent kW units</td></tr>
++<tr><th>Readout</th><td>Monte-Carlo mean and epistemic weight spread; measured power, model residual and physics residual are returned as platform diagnostics</td></tr>
 +</table>
 +<h2>Advanced concepts</h2>
 +<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
 +<div class="card">
 +<h3>Epistemic versus aleatoric</h3>
-+<p>A point prediction that is wrong is useless; a prediction with a wide interval because the operating point is novel is actionable. MC sampling over the weight posterior captures the epistemic part - uncertainty that shrinks as data arrives.</p>
++<p>Monte-Carlo sampling over the variational weight posterior estimates an epistemic component; a fixed sample bank makes repeated requests comparable. It is not aleatoric sensor noise, and neither the spread nor the approximate mean ± 1.96σ band guarantees calibrated coverage.</p>
 +</div>
 +<div class="card">
 +<h3>Soft physics constraints</h3>
-+<p>P = tau * omega is not enforced as a hard layer but as a penalty term. That keeps the model differentiable and lets the data override the constraint where the constraint is wrong - a trade the pages state openly.</p>
++<p>The loss applies a soft penalty around P_electric ≈ 0.94 × τ × ω using consistent kW scaling. The measured-minus-physics residual is also exposed at inference, so an operator can compare the data fit with the mechanical cross-check without treating either as ground truth.</p>
 +</div>
 +<div class="card">
 +<h3>Physics and statistics disagree usefully</h3>
-+<p>When the physics-guided branch is confident and the statistical detectors are not, the disagreement itself is evidence. Fusion treats m18 as an anomaly voter and an uncertainty source rather than an oracle.</p>
++<p>The adapter reports predicted power, measured-minus-predicted error, efficiency-adjusted mechanical power and epistemic spread. Fusion uses m18 as an uncertainty-aware anomaly voter; its diagnostics are observations, not an oracle or a calibrated fault probability.</p>
 +</div>
 +<h2>Platform contract</h2>
 +<table>
-+<tr><th>Input (adapter view)</th><td>torque / rpm / power channels + features</td></tr>
-+<tr><th>Output</th><td>anomaly_score + uncertainty</td></tr>
++<tr><th>Input (adapter view)</th><td>wind speed, ambient temperature, rotor speed, pitch, torque and measured power (the prediction target)</td></tr>
++<tr><th>Output</th><td>WTDataSchema anomaly_score + uncertainty; /analyse physics.pg_bnn adds power prediction, MC spread and measured/model/physics residual diagnostics</td></tr>
 +<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
 +<tr><th>Typical latency</th><td>2500 ms</td></tr>
 +<tr><th>Deployment targets</th><td>cloud</td></tr>
@@ -345,8 +333,8 @@ index e073670..a5cc5ac 100644
 +<h2>Platform layers</h2>
 +<table>
 +<tr><th>Uncertainty</th><td>Second of the two uncertainty emitters; enables inverse-variance weighting in the fusion engine</td></tr>
-+<tr><th>Physics</th><td>Receives constraints from the m19 digital twin and returns physics-consistent residuals</td></tr>
-+<tr><th>Hermes</th><td>anomaly tool with an explicit confidence attached to every observation</td></tr>
++<tr><th>Physics</th><td>Applies the efficiency-adjusted P=τω penalty during fitting and returns the measured-versus-physics residual under physics.pg_bnn</td></tr>
++<tr><th>Hermes</th><td>Hermes explain observations include the measured/predicted power, residuals and MC epistemic spread when m18 ran</td></tr>
 +<tr><th>RUL</th><td>Physics-guided uncertainty propagates into m16's RUL posterior</td></tr>
 +</table>
 +<h2>How it connects to the other 24</h2>
@@ -358,6 +346,7 @@ index e073670..a5cc5ac 100644
 +<h2>Honest limits</h2><ul class="limits">
 +<li>Variational approximation, not exact posterior inference</li>
 +<li>Physics term is a soft penalty against the simulator's own physics</li>
++<li>MC epistemic spread and the approximate mean ± 1.96σ band are not calibrated coverage intervals</li>
 +</ul>
 +<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
 +<h2>Run it</h2>
@@ -406,10 +395,10 @@ index e073670..a5cc5ac 100644
 +</footer>
 +</div></body></html>
 diff --git a/index.html b/index.html
-index e073670..a5cc5ac 100644
+index e073670..8bb22fe 100644
 --- a/index.html
 +++ b/index.html
-@@ -1,38 +1,169 @@
+@@ -1,38 +1,170 @@
  <!DOCTYPE html>
 -<html lang="en">
 -<head>
@@ -523,27 +512,27 @@ index e073670..a5cc5ac 100644
 +</ul>
 +<table>
 +<tr><th>Bayesian body</th><td>BayesianLinear layers sampling weights per forward pass - variational inference over parameters</td></tr>
-+<tr><th>Physics constraint</th><td>Loss includes a P = tau * omega consistency term between predicted power, torque and rotor speed</td></tr>
-+<tr><th>Readout</th><td>Mean prediction plus MC-sampled variance; power residual feeds the anomaly score</td></tr>
++<tr><th>Physics constraint</th><td>Soft efficiency-adjusted mechanical-power penalty: P_electric ≈ 0.94 × τ × ω, with torque and power normalised in consistent kW units</td></tr>
++<tr><th>Readout</th><td>Monte-Carlo mean and epistemic weight spread; measured power, model residual and physics residual are returned as platform diagnostics</td></tr>
 +</table>
 +<h2>Advanced concepts</h2>
 +<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
 +<div class="card">
 +<h3>Epistemic versus aleatoric</h3>
-+<p>A point prediction that is wrong is useless; a prediction with a wide interval because the operating point is novel is actionable. MC sampling over the weight posterior captures the epistemic part - uncertainty that shrinks as data arrives.</p>
++<p>Monte-Carlo sampling over the variational weight posterior estimates an epistemic component; a fixed sample bank makes repeated requests comparable. It is not aleatoric sensor noise, and neither the spread nor the approximate mean ± 1.96σ band guarantees calibrated coverage.</p>
 +</div>
 +<div class="card">
 +<h3>Soft physics constraints</h3>
-+<p>P = tau * omega is not enforced as a hard layer but as a penalty term. That keeps the model differentiable and lets the data override the constraint where the constraint is wrong - a trade the pages state openly.</p>
++<p>The loss applies a soft penalty around P_electric ≈ 0.94 × τ × ω using consistent kW scaling. The measured-minus-physics residual is also exposed at inference, so an operator can compare the data fit with the mechanical cross-check without treating either as ground truth.</p>
 +</div>
 +<div class="card">
 +<h3>Physics and statistics disagree usefully</h3>
-+<p>When the physics-guided branch is confident and the statistical detectors are not, the disagreement itself is evidence. Fusion treats m18 as an anomaly voter and an uncertainty source rather than an oracle.</p>
++<p>The adapter reports predicted power, measured-minus-predicted error, efficiency-adjusted mechanical power and epistemic spread. Fusion uses m18 as an uncertainty-aware anomaly voter; its diagnostics are observations, not an oracle or a calibrated fault probability.</p>
 +</div>
 +<h2>Platform contract</h2>
 +<table>
-+<tr><th>Input (adapter view)</th><td>torque / rpm / power channels + features</td></tr>
-+<tr><th>Output</th><td>anomaly_score + uncertainty</td></tr>
++<tr><th>Input (adapter view)</th><td>wind speed, ambient temperature, rotor speed, pitch, torque and measured power (the prediction target)</td></tr>
++<tr><th>Output</th><td>WTDataSchema anomaly_score + uncertainty; /analyse physics.pg_bnn adds power prediction, MC spread and measured/model/physics residual diagnostics</td></tr>
 +<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
 +<tr><th>Typical latency</th><td>2500 ms</td></tr>
 +<tr><th>Deployment targets</th><td>cloud</td></tr>
@@ -556,8 +545,8 @@ index e073670..a5cc5ac 100644
 +<h2>Platform layers</h2>
 +<table>
 +<tr><th>Uncertainty</th><td>Second of the two uncertainty emitters; enables inverse-variance weighting in the fusion engine</td></tr>
-+<tr><th>Physics</th><td>Receives constraints from the m19 digital twin and returns physics-consistent residuals</td></tr>
-+<tr><th>Hermes</th><td>anomaly tool with an explicit confidence attached to every observation</td></tr>
++<tr><th>Physics</th><td>Applies the efficiency-adjusted P=τω penalty during fitting and returns the measured-versus-physics residual under physics.pg_bnn</td></tr>
++<tr><th>Hermes</th><td>Hermes explain observations include the measured/predicted power, residuals and MC epistemic spread when m18 ran</td></tr>
 +<tr><th>RUL</th><td>Physics-guided uncertainty propagates into m16's RUL posterior</td></tr>
 +</table>
 +<h2>How it connects to the other 24</h2>
@@ -569,6 +558,7 @@ index e073670..a5cc5ac 100644
 +<h2>Honest limits</h2><ul class="limits">
 +<li>Variational approximation, not exact posterior inference</li>
 +<li>Physics term is a soft penalty against the simulator's own physics</li>
++<li>MC epistemic spread and the approximate mean ± 1.96σ band are not calibrated coverage intervals</li>
 +</ul>
 +<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
 +<h2>Run it</h2>

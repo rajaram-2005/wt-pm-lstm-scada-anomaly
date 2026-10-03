@@ -84,7 +84,7 @@ feature branch is limited by the `github-pages` environment's branch policy
 | 13 | `m05-lstm-scada-anomaly` | **wt-pm-lstm-scada-anomaly** (this repo) | anomaly + contract hub | integrated — reference implementation |
 | 14 | `m17-mlp-rul` | wt-pm-mlp-rul-regression | RUL | integrated (proxy target) |
 | 15 | `m16-particle-filter-rul` | wt-pm-particle-filter-rul | RUL | complete |
-| 16 | `m18-pg-bnn` | wt-pm-pg-bnn-wind-turbine | anomaly + uncertainty | integrated (P = τω loss) |
+| 16 | `m18-pg-bnn` | wt-pm-pg-bnn-wind-turbine | anomaly + MC epistemic spread + power/physics diagnostics | integrated (efficiency-adjusted P = τω loss) |
 | 17 | `m24-quantized-edge` | wt-pm-quantized-mobilenet-edge | edge | integrated (recipe on platform edge net) |
 | 18 | `m10-random-forest` | wt-pm-random-forest-telemetry | fault classification | integrated |
 | 19 | `m07-snn-vibration` | wt-pm-snn-event-vibration | fault classification | integrated (surrogate events) |

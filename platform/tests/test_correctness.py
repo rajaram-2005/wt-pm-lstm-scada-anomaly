@@ -1,5 +1,6 @@
 """Boundary/causality regressions, not claims of field accuracy."""
 from copy import deepcopy
+import json
 import os
 from types import SimpleNamespace
 
@@ -69,6 +70,54 @@ def output(mid='a', timestamps=None, **kwargs):
                        **kwargs)
 
 
+def test_pgbnn_rejects_incomplete_input_channels_cleanly():
+    model = build_default_registry().get('m18-pg-bnn')
+    with pytest.raises(ValueError, match='requires SCADA channels'):
+        model._xy(SimpleNamespace(channel_names=('power_kw',)))
+
+
+def test_pgbnn_summary_exposes_physics_and_epistemic_diagnostics():
+    from wtpm_platform.orchestrator import _pg_bnn_summary
+
+    observed = np.array([10., 11., 12.])
+    predicted = np.array([9., 10., 11.])
+    std = np.array([.5, .4, .3])
+    out = output(
+        'm18-pg-bnn', anomaly_score=np.array([1., 2., 3.]),
+        uncertainty=np.array([.1, .2, .3]),
+        extra={
+            'power_observed_kw': observed,
+            'power_pred_kw': predicted,
+            'power_std_kw': std,
+            'power_residual_kw': observed - predicted,
+            'physics_expected_power_kw': np.array([8., 9., 10.]),
+            'physics_residual_kw': np.array([2., 2., 2.]),
+            'epistemic_lower_approx_95_kw': predicted - 1.96 * std,
+            'epistemic_upper_approx_95_kw': predicted + 1.96 * std,
+        },
+    )
+    summary = _pg_bnn_summary(out)
+    assert summary['status'] == 'ok'
+    assert summary['power_predicted_kw'] == 11.
+    assert summary['power_residual_kw'] == 1.
+    assert summary['physics_expected_power_kw'] == 10.
+    assert summary['physics_residual_kw'] == 2.
+    assert summary['epistemic_band_approx_95_kw'] == [10.412, 11.588]
+    json.dumps(summary, allow_nan=False)
+
+    broken = output('m18-pg-bnn', extra={})
+    assert _pg_bnn_summary(broken)['status'] == 'invalid_output'
+
+    empty = output('m18-pg-bnn', timestamps=np.array([], dtype=int), extra=out.extra)
+    assert _pg_bnn_summary(empty)['status'] == 'invalid_output'
+
+    negative_std = deepcopy(out)
+    negative_std.extra['power_std_kw'][0] = -0.1
+    invalid_std_summary = _pg_bnn_summary(negative_std)
+    assert invalid_std_summary['status'] == 'invalid_output'
+    assert invalid_std_summary['error'] == 'power_std_kw cannot be negative'
+
+
 @pytest.mark.parametrize('field,value', [('anomaly_score', [0, np.nan, 1]),
     ('rul_hours', [1, -1, 0]), ('uncertainty', [1, 2]),
     ('probability', {'healthy': np.ones(3) * .9})])
@@ -121,7 +170,7 @@ def test_rul_proxy_uses_elapsed_time_and_excludes_future_labels():
     np.testing.assert_allclose(rul_proxy_hours(b, train_mask=np.array([True, True, False, False]))[:2], 400)
 
 
-@pytest.mark.parametrize('mid', ['m10-random-forest', 'm11-xgboost-tabular', 'm14-isolation-forest', 'm17-mlp-rul'])
+@pytest.mark.parametrize('mid', ['m10-random-forest', 'm11-xgboost-tabular', 'm14-isolation-forest', 'm17-mlp-rul', 'm18-pg-bnn'])
 def test_excluded_future_rows_cannot_change_fitted_model(mid):
     batch = FeaturePipeline().transform(make_training_batch())
     mask = np.arange(batch.n_steps) < 640
@@ -144,6 +193,9 @@ def test_excluded_future_rows_cannot_change_fitted_model(mid):
             np.testing.assert_allclose(getattr(a, name), getattr(b, name))
     for c in a.probability or {}:
         np.testing.assert_allclose(a.probability[c], b.probability[c])
+    if mid == 'm18-pg-bnn':
+        for key in ('power_pred_kw', 'power_std_kw', 'physics_residual_kw'):
+            np.testing.assert_allclose(a.extra[key], b.extra[key])
 
 
 @pytest.fixture(scope='module')
@@ -212,6 +264,30 @@ def test_physics_penalty_has_gradient_and_consistent_kw_units(full_models):
     value.backward()
     expected_kw = .94 * 10 * 2 * 3.14159
     assert pred.grad.item() == pytest.approx(.2 * (20 - expected_kw) / 10, rel=1e-5)
+
+
+def test_pgbnn_adapter_is_repeatable_and_reports_physics_diagnostics(full_models):
+    import torch
+
+    orch, batch = full_models
+    model = orch.registry.get('m18-pg-bnn')
+    before_rng = torch.random.get_rng_state().clone()
+    first = model.predict(batch)
+    after_rng = torch.random.get_rng_state()
+    second = model.predict(batch)
+    assert first.ok and second.ok, (first.error, second.error)
+    assert torch.equal(before_rng, after_rng)
+    for key in ('power_pred_kw', 'power_std_kw', 'power_residual_kw',
+                'physics_expected_power_kw', 'physics_residual_kw',
+                'epistemic_lower_approx_95_kw', 'epistemic_upper_approx_95_kw'):
+        np.testing.assert_allclose(first.extra[key], second.extra[key])
+    expected = .94 * batch.channel('main_shaft_torque_knm') \
+        * batch.channel('rotor_speed_rpm') * (2 * np.pi / 60.0)
+    np.testing.assert_allclose(first.extra['physics_expected_power_kw'], expected, rtol=1e-5)
+    np.testing.assert_allclose(first.extra['power_residual_kw'],
+                               batch.channel('power_kw') - first.extra['power_pred_kw'])
+    assert np.all(first.extra['power_std_kw'] >= 0)
+    assert first.extra['calibration_rows'] > 0
 
 
 def test_nt_xent_uses_negative_pairs(full_models):

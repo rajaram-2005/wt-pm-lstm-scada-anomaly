@@ -31,7 +31,7 @@ not model accuracy on company data.
 On the company computer, install Docker and Git, then run:
 
 ```bash
-git clone --single-branch --branch arena/01a0cc04-wt-pm-lstm-scada-anomaly https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git
+git clone --single-branch --branch main https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git
 cd wt-pm-lstm-scada-anomaly
 ```
 
@@ -122,6 +122,9 @@ untrusted websites on the same machine while using an unauthenticated local API.
 Real company SCADA ingestion, model validation/recalibration, persistent storage,
 access control and monitoring are separate deployment work. Do not connect this
 demo to turbine controls or treat its simulated results as operational advice.
+See the [detailed SCADA and website integration protocol](SCADA_WEBSITE_INTEGRATION_PROTOCOL.md)
+for the supported CSV/JSON boundary, required site bridge, secure web pattern,
+and the validation work that remains before a field pilot.
 
 ## Offline transfer to another company machine
 

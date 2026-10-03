@@ -55,6 +55,7 @@ def test_zero_cost_emulators_and_sil(tmp_path):
         headers = f.readline().strip().split(",")
     pr = probe_headers(headers, hot_tag_map())
     assert pr["ready"]
+    assert pr["ready_for_full_profile"] and pr["time_mapped"]
     live = ingest_scada_csv(csvp, turbine_id="T01", tag_map=hot_tag_map())
     assert live.n_steps == 48
 
@@ -93,6 +94,9 @@ def test_scada_column_map_and_writeback():
     )
     assert resolve_column("WindSpeed") == "wind_speed_ms"
     assert resolve_column("WT07.BrgVib") == "bearing_vib_rms_mm_s"
+    assert resolve_column("BearingVibration") == "bearing_vib_rms_mm_s"
+    assert resolve_column("MainShaftTorque") == "main_shaft_torque_knm"
+    assert resolve_column("YawError") == "yaw_error_deg"
     assert resolve_column("DateTime") == "__time__"
     rows = [
         {"timestamp": 1700000000 + i * 600, "wind_speed": 8 + 0.01 * i,
@@ -102,6 +106,7 @@ def test_scada_column_map_and_writeback():
     b = ingest_scada_rows(rows, turbine_id="WT-07")
     assert "wind_speed_ms" in b.channel_names
     assert np.isfinite(b.channel("wind_speed_ms")).all()
+    assert b.timestamps[0] == 1700000000 and not b.meta["scada_timestamps_generated"]
     # torque filled from P/ω
     assert np.isfinite(b.channel("main_shaft_torque_knm")).sum() > 0
     tags = emit_scada_tags({
@@ -113,6 +118,53 @@ def test_scada_column_map_and_writeback():
     }, "WT-07")
     assert tags["tags"]["WTPM.FAULT"] == "healthy"
     assert any(p["tag"] == "WTPM.RUL_H" for p in tags["point_list"])
+
+
+def test_scada_timestamp_units_order_fleet_and_tag_map_validation():
+    from wtpm_platform.scada import (
+        PG_BNN_REQUIRED_CHANNELS, _parse_time, ingest_scada_rows, probe_headers,
+    )
+
+    rows = [
+        {"timestamp": 1_700_000_000_000 + i * 600_000, "turbine_id": "WT-07",
+         "wind_speed": 8.0, "power": 1000.0, "rpm": 12.0}
+        for i in range(2)
+    ]
+    batch = ingest_scada_rows(rows)
+    np.testing.assert_array_equal(batch.timestamps, [1_700_000_000, 1_700_000_600])
+    assert batch.turbine_id == "WT-07"
+    assert _parse_time("2024-01-01T00:00:00Z") == 1_704_067_200
+    assert _parse_time("2024-01-01 00:00:00") is None  # timezone-naive is ambiguous
+
+    headers = ["timestamp", *PG_BNN_REQUIRED_CHANNELS]
+    report = probe_headers(headers)
+    assert report["ready_for_pg_bnn"]
+    assert not report["ready_for_full_profile"]
+
+    mixed = [dict(row, turbine_id="WT-08" if i else "WT-07")
+             for i, row in enumerate(rows)]
+    with pytest.raises(ValueError, match="one turbine"):
+        ingest_scada_rows(mixed)
+    unordered = [rows[1], rows[0]]
+    with pytest.raises(ValueError, match="strictly increasing"):
+        ingest_scada_rows(unordered)
+    duplicate = [rows[0], dict(rows[0])]
+    with pytest.raises(ValueError, match="strictly increasing"):
+        ingest_scada_rows(duplicate)
+    with pytest.raises(ValueError, match="not a canonical channel"):
+        ingest_scada_rows(rows, tag_map={"custom_power": "power_kw_typo"})
+
+
+def test_scada_cli_reports_bad_files_without_tracebacks(tmp_path, capsys):
+    from wtpm_platform.cli import main
+    missing = tmp_path / "missing.csv"
+    assert main(["scada", "--probe", str(missing)]) == 2
+    output = capsys.readouterr().err
+    assert "cannot probe input" in output and "Traceback" not in output
+
+    assert main(["scada", "--in", str(missing), "--map", str(tmp_path / "missing.json")]) == 2
+    output = capsys.readouterr().err
+    assert "cannot load tag map" in output and "Traceback" not in output
 
 
 def test_hermes_trace_has_thought_action_observation():
@@ -129,7 +181,14 @@ def test_hermes_trace_has_thought_action_observation():
         "safety": {"decision": "INSPECT", "reasons": ["bearing"]},
         "action": {"action": "schedule_inspection", "cost_optimal": "schedule_inspection"},
         "risk_score": 72.0,
-        "physics": {"power_residual_kw_now": 3.0},
+        "physics": {
+            "power_residual_kw_now": 3.0,
+            "pg_bnn": {
+                "status": "ok", "power_predicted_kw": 1200.0,
+                "power_observed_kw": 1210.0, "power_residual_kw": 10.0,
+                "physics_residual_kw": 3.0, "epistemic_std_kw": 12.5,
+            },
+        },
         "what_if_derate_20pct": {"scenario": "derate 20%", "delta_pct": {"von_mises_proxy": -8.0}},
     }
 
@@ -152,6 +211,10 @@ def test_hermes_trace_has_thought_action_observation():
     assert all(s.thought for s in res.trace)
     assert res.final["what"] == "bearing_wear"
     assert "bearing" in res.final["why"]["narrative"].lower() or "bearing_wear" in res.final["why"]["narrative"]
+    explain_step = next(s for s in res.trace if s.action == "explain")
+    assert explain_step.observation["pg_bnn"]["power_residual_kw"] == 10.0
+    assert res.final["why"]["pg_bnn"]["epistemic_std_kw"] == 12.5
+    assert "PG-BNN power estimate" in res.final["why"]["narrative"]
     c = contrastive_channels(b)
     assert "bearing_vib_rms_mm_s" in c
 
@@ -166,6 +229,7 @@ def test_builtin_simulator_and_cli_version():
     with pytest.raises(SystemExit) as ei:
         main(["--version"])
     assert ei.value.code == 0
+    assert main(["scada", "--no-fit"]) == 2
 
 
 def synth_batch(n: int = 400, seed: int = 0, fault_at: float = 0.7) -> SensorBatch:

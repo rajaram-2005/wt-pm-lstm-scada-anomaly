@@ -5,7 +5,7 @@ services:
     name: wt-pm-command-center-full
     runtime: docker
     repo: https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly
-    branch: arena/01a0cc04-wt-pm-lstm-scada-anomaly
+    branch: main
     plan: pro
     region: frankfurt
     dockerfilePath: ./Dockerfile.full

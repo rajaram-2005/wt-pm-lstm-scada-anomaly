@@ -21,7 +21,7 @@ from wtpm_platform.contracts import (
 )
 from wtpm_platform.data import SAFETY_CHANNELS, degradation_target
 from wtpm_platform.adapters.anomaly import _standardiser, robust_calibrate
-from wtpm_platform.protocol import training_mask
+from wtpm_platform.protocol import isolated_torch_rng, training_mask
 
 
 # ---------------------------------------------------------------------------
@@ -32,83 +32,161 @@ class PGBNNWindTurbine(BaseWTModel):
         model_id="m18-pg-bnn",
         repository="wt-pm-pg-bnn-wind-turbine",
         task=TaskType.ANOMALY_DETECTION,
-        input_requirements=["torque/rpm/power channels", "features"],
-        output_schema=["anomaly_score", "uncertainty"],
+        input_requirements=["wind / temperature / rpm / pitch / torque / power"],
+        output_schema=["anomaly_score", "uncertainty", "power prediction", "physics residual"],
         resource_requirements=["torch"],
         typical_latency_ms=2500,
         deployment_targets=[Deployment.CLOUD],
-        notes="predicts power from context under P=τω physics loss; "
-              "MC-sampled BayesianLinear gives epistemic uncertainty",
+        notes="predicts power from context under the P=τω loss; reports a held-out "
+              "healthy residual, repeatable MC epistemic spread and mechanical-power cross-check",
     )
 
+    CONTEXT_CHANNELS = (
+        "wind_speed_ms", "ambient_temp_c", "rotor_speed_rpm",
+        "pitch_angle_deg", "main_shaft_torque_knm",
+    )
+    REQUIRED_CHANNELS = CONTEXT_CHANNELS + ("power_kw",)
+    POWER_EFFICIENCY = 0.94
     MC = 12
+    CALIBRATION_FRACTION = 0.2
+    TRAINING_EPOCHS = 150
 
     def _check_deps(self) -> None:
         import torch  # noqa: F401
         load_repo_module("wt-pm-pg-bnn-wind-turbine")
 
     def _xy(self, batch: SensorBatch):
-        names = list(batch.channel_names)
-        ctx = [n for n in ("wind_speed_ms", "ambient_temp_c", "rotor_speed_rpm",
-                           "pitch_angle_deg", "main_shaft_torque_knm") if n in names]
-        X = np.column_stack([batch.channel(c) for c in ctx])
-        y = batch.channel("power_kw")
-        tau = batch.channel("main_shaft_torque_knm") * 1e3
-        omega = batch.channel("rotor_speed_rpm") * 2 * np.pi / 60.0
-        return X, y, tau, omega
+        names = set(batch.channel_names)
+        missing = sorted(set(self.REQUIRED_CHANNELS) - names)
+        if missing:
+            raise ValueError(f"PG-BNN requires SCADA channels: {', '.join(missing)}")
+        X = np.column_stack([batch.channel(c) for c in self.CONTEXT_CHANNELS])
+        y = np.asarray(batch.channel("power_kw"), dtype=float)
+        tau_nm = np.asarray(batch.channel("main_shaft_torque_knm"), dtype=float) * 1e3
+        omega = np.asarray(batch.channel("rotor_speed_rpm"), dtype=float) * (2 * np.pi / 60.0)
+        if not all(np.isfinite(a).all() for a in (X, y, tau_nm, omega)):
+            raise ValueError("PG-BNN inputs must be finite after SCADA quality filtering")
+        return X, y, tau_nm, omega
+
+    @staticmethod
+    def _seed(batch: SensorBatch, model_id: str) -> int:
+        # Stable across processes and independent of Python's salted hash().
+        base = int(batch.meta.get("training_seed", 42))
+        return (base + sum(map(ord, model_id))) & 0x7FFFFFFF
 
     def fit(self, batch: SensorBatch, train_mask: np.ndarray) -> None:
         import torch
         mod = load_repo_module("wt-pm-pg-bnn-wind-turbine")
-        X, y, tau, omega = self._xy(batch)
-        Xtr, ytr = X[train_mask], y[train_mask]
-        self._stdx = _standardiser(Xtr)
-        self._ymu, self._ysd = ytr.mean(), ytr.std() + 1e-9
-        xb = torch.tensor(self._stdx(Xtr), dtype=torch.float32)
-        yb = torch.tensor((ytr - self._ymu) / self._ysd, dtype=torch.float32)
-        pw = torch.tensor(y[train_mask], dtype=torch.float32)
-        tq = torch.tensor(tau[train_mask], dtype=torch.float32)
-        om = torch.tensor(omega[train_mask], dtype=torch.float32)
-        # small BNN from the repo's BayesianLinear blocks
-        l1, l2 = mod.BayesianLinear(X.shape[1], 32), mod.BayesianLinear(32, 1)
-        lossf = mod.PhysicsGuidedLoss(lambda_physics=0.1)  # repo's loss (kW scale)
-        opt = torch.optim.Adam(list(l1.parameters()) + list(l2.parameters()), lr=5e-3)
-        for _ in range(150):
-            opt.zero_grad()
-            pred = l2(torch.relu(l1(xb))).squeeze(-1)
-            # Both sides are kW / training scale. Crucially power depends on pred.
-            loss = lossf(pred, yb, pred + self._ymu / self._ysd,
-                         0.94 * tq / 1e3 / self._ysd, om * 60 / (2 * np.pi))
-            kl = sum((layer.w_mu.square() + layer.w_logvar.exp() - 1 - layer.w_logvar).mean()
-                     + (layer.b_mu.square() + layer.b_logvar.exp() - 1 - layer.b_logvar).mean()
-                     for layer in (l1, l2)) * 0.5
-            loss = loss + 1e-4 * kl
-            loss.backward()
-            opt.step()
+        train_mask = training_mask(batch, train_mask)
+        labels = batch.meta.get("fault_label")
+        if labels is not None:
+            labels = np.asarray(labels)
+            if labels.shape != (batch.n_steps,):
+                raise ValueError("fault_label must have one entry per SCADA sample")
+            if np.any(labels.astype(bool) & train_mask):
+                raise ValueError("PG-BNN healthy training mask includes fault-labelled rows")
+
+        X, y, tau_nm, omega = self._xy(batch)
+        rows = np.flatnonzero(train_mask)
+        if len(rows) < 8:
+            raise ValueError("PG-BNN needs at least 8 healthy, quality-approved samples")
+        # Keep a time-ordered healthy tail out of fitting for residual calibration.
+        n_cal = max(2, int(np.ceil(len(rows) * self.CALIBRATION_FRACTION)))
+        fit_rows, cal_rows = rows[:-n_cal], rows[-n_cal:]
+        if len(fit_rows) < 2:
+            raise ValueError("PG-BNN needs at least 2 fitting samples before calibration")
+
+        Xfit, yfit = X[fit_rows], y[fit_rows]
+        self._stdx = _standardiser(Xfit)
+        self._ymu = float(yfit.mean())
+        self._ysd = float(yfit.std())
+        if self._ysd < 1e-6:
+            self._ysd = 1.0
+
+        xb = torch.tensor(self._stdx(Xfit), dtype=torch.float32)
+        yb = torch.tensor((yfit - self._ymu) / self._ysd, dtype=torch.float32)
+        tq = torch.tensor(tau_nm[fit_rows], dtype=torch.float32)
+        rpm = torch.tensor(batch.channel("rotor_speed_rpm")[fit_rows], dtype=torch.float32)
+        # Model blocks and physics loss are the original PG-BNN repository code.
+        seed = self._seed(batch, self.spec.model_id)
+        with isolated_torch_rng(seed):
+            l1 = mod.BayesianLinear(X.shape[1], 32)
+            l2 = mod.BayesianLinear(32, 1)
+            lossf = mod.PhysicsGuidedLoss(lambda_physics=0.1)
+            opt = torch.optim.Adam(list(l1.parameters()) + list(l2.parameters()), lr=5e-3)
+            for _ in range(self.TRAINING_EPOCHS):
+                opt.zero_grad()
+                pred = l2(torch.relu(l1(xb))).squeeze(-1)
+                # The upstream loss compares raw kW / y-scale on both sides.
+                # Divide its physical prediction by the same scale as y_pred;
+                # pass the learned prediction so this penalty gradients weights.
+                power_over_scale = pred + self._ymu / self._ysd
+                torque_knm_over_scale = (
+                    self.POWER_EFFICIENCY * tq / 1e3 / self._ysd
+                )
+                loss = lossf(pred, yb, power_over_scale,
+                             torque_knm_over_scale, rpm)
+                kl = sum(
+                    (layer.w_mu.square() + layer.w_logvar.exp() - 1
+                     - layer.w_logvar).mean()
+                    + (layer.b_mu.square() + layer.b_logvar.exp() - 1
+                       - layer.b_logvar).mean()
+                    for layer in (l1, l2)
+                ) * 0.5
+                (loss + 1e-4 * kl).backward()
+                opt.step()
+
+        # A fixed posterior sample bank makes repeated requests comparable and
+        # keeps inference from consuming the caller's global PyTorch RNG stream.
+        self._mc_seed = (seed + 1) & 0x7FFFFFFF
+        Xcal, ycal = X[cal_rows], y[cal_rows]
+        xb_cal = torch.tensor(self._stdx(Xcal), dtype=torch.float32)
+        ycal_norm = (ycal - self._ymu) / self._ysd
+        with isolated_torch_rng(self._mc_seed), torch.no_grad():
+            preds = torch.stack([
+                l2(torch.relu(l1(xb_cal))).squeeze(-1) for _ in range(self.MC)
+            ]).numpy()
         self._l1, self._l2 = l1, l2
-        with torch.no_grad():
-            preds = torch.stack([l2(torch.relu(l1(xb))).squeeze(-1) for _ in range(self.MC)])
-        err = np.abs(preds.mean(0).numpy() - yb.numpy())
-        self._cal = robust_calibrate(err)
+        self._cal = robust_calibrate(np.abs(preds.mean(0) - ycal_norm))
+        self._calibration_rows = int(len(cal_rows))
         self._fitted = True
 
     def _predict(self, batch: SensorBatch) -> ModelOutput:
         import torch
-        X, y, _, _ = self._xy(batch)
+        X, y, tau_nm, omega = self._xy(batch)
         xb = torch.tensor(self._stdx(X), dtype=torch.float32)
         yn = (y - self._ymu) / self._ysd
-        with torch.no_grad():
-            preds = torch.stack([self._l2(torch.relu(self._l1(xb))).squeeze(-1)
-                                 for _ in range(self.MC)]).numpy()
+        with isolated_torch_rng(self._mc_seed), torch.no_grad():
+            preds = torch.stack([
+                self._l2(torch.relu(self._l1(xb))).squeeze(-1)
+                for _ in range(self.MC)
+            ]).numpy()
+
         mean, std = preds.mean(0), preds.std(0)
-        err = np.abs(mean - yn)
+        error_norm = np.abs(mean - yn)
+        predicted_kw = mean * self._ysd + self._ymu
+        std_kw = std * self._ysd
+        expected_kw = self.POWER_EFFICIENCY * (tau_nm / 1e3) * omega
         return ModelOutput(
             model_id=self.spec.model_id, task=self.spec.task,
             turbine_id=batch.turbine_id, timestamps=batch.timestamps,
-            anomaly_score=self._cal(err),
+            anomaly_score=self._cal(error_norm),
             uncertainty=std / self._cal.scale,
-            explanation="physics-guided BNN power residual; uncertainty = MC weight sampling",
-            extra={"power_pred_kw": mean * self._ysd + self._ymu, "power_std_kw": std * self._ysd},
+            explanation=(
+                "PG-BNN power residual; physics cross-check is measured minus "
+                "0.94×torque×angular-speed; MC spread is epistemic, not calibrated"
+            ),
+            extra={
+                "power_observed_kw": y,
+                "power_pred_kw": predicted_kw,
+                "power_std_kw": std_kw,
+                "power_residual_kw": y - predicted_kw,
+                "physics_expected_power_kw": expected_kw,
+                "physics_residual_kw": y - expected_kw,
+                "epistemic_lower_approx_95_kw": predicted_kw - 1.96 * std_kw,
+                "epistemic_upper_approx_95_kw": predicted_kw + 1.96 * std_kw,
+                "calibration_rows": self._calibration_rows,
+            },
         )
 
 
