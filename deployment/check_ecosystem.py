@@ -160,6 +160,17 @@ def check_host_site(result: Result, model: dict, site: Path, catalog: dict) -> N
 
 
 def check_remote(result: Result, model: dict, catalog: dict) -> None:
+    if model["repo"] == REF_REPO:
+        # The host repository keeps its own README and publishes the collection's
+        # pages from docs/launch through the Pages workflow, so it has no
+        # single-file index.html to compare. Its site is checked with --site.
+        readme = gh_file(model["repo"], "README.md", "main")
+        if readme is None:
+            result.problems.append("remote: README.md not readable on main")
+        else:
+            check_reference_readme(result, model, readme)
+        return
+
     repo = model["repo"]
     readme = gh_file(repo, "README.md", "main")
     if readme is None:
