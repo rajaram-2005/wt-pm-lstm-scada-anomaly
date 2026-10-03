@@ -10,7 +10,10 @@
   `docs/index.html` for all 25 repositories from that catalog, plus the merged
   `all-models.html` index and the 25 pages on the static site.
 - `deployment/check_ecosystem.py`: verifies every page's number, adapter, status,
-  cross-links, advanced section, `gh-pages` copy and Pages build status.
+  cross-links, advanced section, `gh-pages` copy and Pages build status; checks
+  the host repository on its own `README.md` under `--remote` (`1/25` remote
+  repositories merged while the 24 siblings await push access) and verifies all
+  25 rendered pages under `--site`.
 - `deployment/rollout_all.sh` / `rollout_one.sh`: clone -> branch -> PR -> merge
   -> clean `gh-pages` rebuild for the 24 sibling repositories.
 - `deployment/model-pages/`: one `git am`-able patch per sibling repository
