@@ -155,6 +155,62 @@ def test_pages_cross_link_all_25_repositories(catalog, builder):
 
 
 # ---------------------------------------------------------------------------
+# ready-to-commit patch bundle
+# ---------------------------------------------------------------------------
+PATCH_DIR = ROOT / "deployment" / "model-pages"
+
+
+def test_every_sibling_has_a_patch(catalog):
+    siblings = [m for m in catalog["models"] if m["repo"] != catalog["reference_repo"]]
+    assert len(siblings) == 24
+    for model in siblings:
+        assert (PATCH_DIR / f"{model['repo']}.patch").is_file(), model["repo"]
+
+
+def test_patches_touch_only_the_three_page_files(catalog):
+    allowed = {"README.md", "index.html", "docs/index.html"}
+    for model in catalog["models"]:
+        if model["repo"] == catalog["reference_repo"]:
+            continue
+        patch = (PATCH_DIR / f"{model['repo']}.patch").read_text(encoding="utf-8")
+        assert patch.startswith("From "), model["repo"]
+        changed = set(re.findall(r"^diff --git a/(\S+) b/", patch, flags=re.MULTILINE))
+        assert changed == allowed, f"{model['repo']}: {sorted(changed)}"
+        assert "model.py" not in changed and "requirements.txt" not in changed
+        assert model["adapter"] in patch, model["repo"]
+        assert f"model **{model['number']:02d}** of 25" in patch, model["repo"]
+
+
+def test_patches_carry_the_current_render(catalog):
+    """A patch must carry today's catalog content, or be regenerated.
+
+    The patch replaces the three page files wholesale, so the lines that matter -
+    the summary, every advanced-concept heading, every platform-layer name, the
+    adapter pill and the GitHub button - are additions and must be present. If the
+    catalog moves on, ``deployment/model-pages/generate.sh`` has to be re-run.
+    """
+    for model in catalog["models"]:
+        if model["repo"] == catalog["reference_repo"]:
+            continue
+        patch = (PATCH_DIR / f"{model['repo']}.patch").read_text(encoding="utf-8")
+        signatures = [
+            model["summary"][:60],
+            f"MODEL {model['number']:02d} / 25",
+            f"model **{model['number']:02d}** of 25",
+            "View on GitHub",
+            "## Advanced concepts",
+            "## Honest limits",
+        ]
+        signatures += [item["concept"] for item in model["advanced"]]
+        signatures += [row["layer"] for row in model["layers"]]
+        missing = [sig for sig in signatures if sig not in patch]
+        assert not missing, (
+            f"{model['repo']}: patch is stale (re-run deployment/model-pages/generate.sh): "
+            f"{missing[:3]}"
+        )
+
+
+# ---------------------------------------------------------------------------
 # published static site
 # ---------------------------------------------------------------------------
 def test_site_ships_all_25_pages(catalog):
