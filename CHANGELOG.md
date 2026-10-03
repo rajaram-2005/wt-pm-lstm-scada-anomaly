@@ -13,6 +13,12 @@
   cross-links, advanced section, `gh-pages` copy and Pages build status.
 - `deployment/rollout_all.sh` / `rollout_one.sh`: clone -> branch -> PR -> merge
   -> clean `gh-pages` rebuild for the 24 sibling repositories.
+- `deployment/model-pages/`: one `git am`-able patch per sibling repository
+  (24), generated from the catalog and verified against each `origin/main`,
+  for when the token cannot push. `generate.sh`, `apply-all.sh`, README.
+- Published: the reference site now serves the merged index and all 25 model
+  pages (`/all-models.html`, `/model-01-…` … `/model-25-…`) via the `pages`
+  workflow on `main`.
 - `docs/ecosystem.html`: advanced-layer definitions, per-model page links and an
   explicit explanation of the two numbering schemes.
 - `docs/launch/`: the static site now ships all 25 model pages plus the merged

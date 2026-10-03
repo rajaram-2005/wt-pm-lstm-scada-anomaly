@@ -1,0 +1,667 @@
+From 25972f4ab4b5a24d5f3370efcc194a5ccbc5be2c Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 05:40:17 +0000
+Subject: [PATCH] Advanced-concepts page and platform wiring
+
+Generated from deployment/models.catalog.json in the reference repository, so
+this page agrees with the other 24 on collection numbering, adapter id, status,
+contract and honest limits.
+
+- README.md: collection position (both numbering schemes), architecture table,
+  advanced concepts with failure modes, platform contract, platform-layer
+  participation, cross-links to the other 24 pages, standalone + platform setup,
+  honest limits.
+- index.html and docs/index.html: the same content as a self-contained landing
+  page - no external CSS/JS/assets - with a working View on GitHub link and
+  links to all 25 repositories.
+- model.py and requirements.txt untouched; the repository stays independently
+  runnable.
+---
+ README.md       | 180 +++++++++++++++++++++++++-----------------
+ docs/index.html | 204 +++++++++++++++++++++++++++++++++++++++---------
+ index.html      | 204 +++++++++++++++++++++++++++++++++++++++---------
+ 3 files changed, 441 insertions(+), 147 deletions(-)
+
+diff --git a/README.md b/README.md
+index d00ba76..834a037 100644
+--- a/README.md
++++ b/README.md
+@@ -1,102 +1,140 @@
+-# DBN-FEATURE-EXTRACTION
++# DBN Feature Extraction
++
+ > **Category:** RUL Prognostics  
+ > **Platform adapter:** `m09-dbn-features`  
+-> **Status:** integrated (platform supplies its own CD-1 loop; Model 5 ships one too)
++> **Status:** integrated (platform supplies its own CD-1 loop; the repo ships one too)  
++> **Collection position:** model **05** of 25 (alphabetical)
+ 
+-## Description
+-Deep Belief Network using stacked Restricted Boltzmann Machines for automated feature hierarchy in wear tracking.
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
+ 
+-This is model **m09** of the WT-PM wind-turbine predictive-maintenance suite (fifth repository alphabetically in the collection). The repository stays independently usable (`python model.py`). The unified **wt-pm** platform wraps the original `model.py` through adapter `m09-dbn-features` — it does not replace or fork this code.
++A stack of Restricted Boltzmann Machines trained greedily layer by layer, then read out as a feature hierarchy for wear tracking. It is the classic pre-deep-learning answer to 'we do not have enough labels', and it still earns its place because its features are interpretable as successive energy minima.
+ 
+-**Model 5** extends the original scaffold (3-layer DBN, randomly initialised RBM stack with no training loop) to a **5-layer stack** with greedy CD-1 pretraining and supervised fine-tuning:
++## How this page fits the collection
+ 
+-```
+-Input (64 sensor channels in (0, 1))
+-  └─ RBM(64→48)  + CD-1 pretraining    # detector bank
+-  └─ RBM(48→32)  + CD-1 pretraining    # mid-level wear patterns
+-  └─ RBM(32→16)  + CD-1 pretraining    # degradation hierarchy
+-  └─ RBM(16→8)   + CD-1 pretraining    # compact codes
+-  └─ Linear(8→1)                       # normalized RUL regression head
+-```
++The WT-PM collection numbers its 25 repositories **alphabetically 01-25** - that is the number on this page - and gives each one a **task-based adapter id** (`m09-dbn-features`) used by the platform registry, the `wt-pm` CLI and the fusion engine. Both are printed on every page so the ecosystem graph and the registry can be read against each other.
+ 
+-- **Pretraining:** greedy layer-wise CD-1 (free-energy contrastive divergence), 15 epochs per RBM (SGD, lr 0.1). Visible units see thresholded sensor bits and sampled hidden states are chained upward — the classic DBN protocol; reconstruction MSE drops from the ~0.25 no-skill level to 0.09 / 0.07 / 0.06 / 0.07 across the stack.
+-- **Fine-tuning:** Adam with differential rates (stack 1e-3, head 1e-2, weight decay 1e-4), MSE loss, early stopping (patience 20) on the validation window.
+-- **Data:** synthetic fleet campaign — 48 turbines with turbine-specific wear exponents and service lives, inspected every 6 campaign days (2,140 inspections, 64 channels). Sensors report the nonlinear wear state/rate pair plus load and thermal oscillations. **Chronological** campaign-day split (65% / 15% / 20%): training never sees an inspection recorded after its cutoff.
++- Repository: <https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction>
++- Landing page: <https://rajaram-2005.github.io/wt-pm-dbn-feature-extraction/>
++- Ecosystem graph: <https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html>
++- Platform architecture: <https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md>
++- Per-model table: <https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md>
+ 
+-## Structure
+-```
+-├── model.py           # Model 5 architecture + fleet synthesis + training script
+-├── requirements.txt   # Dependencies
+-├── results/           # Run outputs (metrics JSON, best .pt weights) — created at runtime
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
+-```
++## Model
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++- `RBM / DBN classes in model.py`
++- `Contrastive-divergence (CD-1) training loop - present in the repo and re-implemented by the adapter`
+ 
+-2. Run Model 5 (fleet synthesis → CD-1 pretraining → fine-tuning → evaluation):
+-   ```bash
+-   python model.py
+-   ```
++| Block | Detail |
++|---|---|
++| RBM | Visible-hidden bipartite energy model; each unit is a Bernoulli or Gaussian variable |
++| Greedy pretraining | CD-1 Gibbs sampling per layer - one negative-phase step is enough for a usable gradient estimate |
++| Readout | Upper-layer activations become features for the RUL regressors |
+ 
+-Outputs:
+-- Printed evaluation table (RMSE / MAE / R² on train/val/test, in normalized RUL and campaign days)
+-- `results/model5_metrics.json` — full metrics summary
+-- `results/model5_weights.pt` — best weights (excluded from git via `.gitignore`)
++## Advanced concepts
+ 
+-## Model
++The ideas this model actually leans on - stated with their failure modes, not as marketing.
+ 
+-[`model.py`](model.py) defines `RBM(visible, hidden)` and `DBN(layers=[64, 48, 32, 16, 8])`:
++### Energy-based models
+ 
+-| Block | Definition |
+-|---|---|
+-| `RBM` | `W (visible, hidden)`, `v_bias`, `h_bias`; `sample_h(v)` / `sample_v(h)` return `(prob, sample)`; `free_energy(v)` drives the CD-1 update |
+-| `DBN.rbms` | `ModuleList` of 4 stacked RBMs (5,521 parameters total with the head) |
+-| `DBN.forward(x)` | Mean-field hidden probabilities upward, then `classifier` → normalized RUL |
+-| `DBN.pretrain(x)` | Greedy layer-wise CD-1 (additive helper; returns per-RBM reconstruction MSE) |
+-| `DBN.encode(x)` | Deep feature representation without the classifier |
++An RBM defines an energy for every visible-hidden configuration; learning lowers the energy of data and raises it elsewhere. The gradient needs the model's own expectation, which is intractable - that is the whole reason for contrastive divergence.
+ 
+-- **Input:** feature tensor `x` of shape `(batch_size, 64)` (float32 in (0, 1) — the visible-probability range the RBMs expect).
+-- **Output:** `forward` returns `(batch_size, 1)` normalized RUL; `encode` returns `(batch_size, 8)` deep features.
+-- **Size:** 5,521 parameters for the default 5-layer configuration. The platform adapter instantiates `DBN(layers=[38, 32, 16])` on its 38-column feature table.
++### Why one Gibbs step is enough
+ 
+-`python model.py` runs the full pipeline (deterministic seeds). Verified with Python 3.11 and PyTorch 2.14.
++CD-1 is biased but cheap: it does not follow the true gradient, yet it reliably moves parameters in a useful direction. The bias is why DBNs were displaced by backpropagation-based autoencoders, and why the repo's CD-1 loop matters for reproducing the numbers.
++
++### Layerwise features as a ladder
++
++Each layer's activations are a legitimate feature set, so you can stop early for a cheaper model. The platform treats the DBN as a feature provider, which is how it can serve an RUL regressor without retraining anything downstream.
+ 
+ ## Platform contract
+ 
+ | | |
+ |---|---|
+-| Input (adapter view) | tabular features (`batch.features`) |
+-| Output (`ModelOutput` / `WTDataSchema`) | `extra={"embeddings": v, "embeddings_shape": ...}` — deep features from the CD-1-pretrained stack |
+-| Integration role | Feature provider (`TaskType.FEATURE_EXTRACTION`, routed in `support`). Extracted embeddings feed downstream tabular models. Not a decision maker. |
+-| Deployment / fallback | `cloud` (requires `torch`) · no fallback model configured |
++| Input (adapter view) | feature vectors (no labels required for pretraining) |
++| Output (`WTDataSchema`) | extracted_features (hierarchical activations) |
++| Record format | `wt-pm.platform.v1` |
++| Typical latency | 3000 ms |
++| Deployment targets | cloud |
++| Resource requirements | torch |
++| Fallback | none - this model is a leaf |
++| Subsystem focus | whole turbine |
++| Hermes tool | `feature source for rul / diagnose` |
++
++Records follow the shared `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required; every other field is optional, so a model fills in only what it honestly produces and the fusion layer can tell absence from a zero.
++
++## Platform layers
++
++| Layer | What this model does there |
++|---|---|
++| **Fusion** | Feature extractor feeding the m17 RUL regressor and the tabular voters |
++| **Protocol** | Pretraining masks exclude held-out rows entirely, so unsupervised structure cannot leak test labels |
++| **Evaluation** | Judged by downstream RUL error, not by reconstruction loss - a lower CD-1 objective is not automatically a better feature |
++| **XAI** | Layer activations are inspectable, which makes the DBN the most auditable feature extractor in the collection |
++
++Layers are described once, in the catalog, and referenced by every model that participates in them: fusion, calibrated uncertainty, drift and data trust, explainability, physics constraints, the safety gate, the evaluation protocol and the Hermes agent.
++
++## How it connects to the other 24
++
++**Feeds**
+ 
+-The platform adapter `m09-dbn-features` calls the original API surface (`DBN(layers=[...])`, `rbm.W` / `rbm.v_bias` / `rbm.h_bias`, `sample_h` / `sample_v`) and runs its own CD-1 loop over them — Model 5 keeps all of these stable (verified against the adapter's call sequence). Records emitted via `ModelOutput.to_records()` follow `WTDataSchema` (`wt-pm.platform.v1`); embeddings surface under `result["support"]["m09-dbn-features"]` in `Orchestrator.analyse()`. The Hermes agent loop uses diagnostic, anomaly and RUL voters as tools; `m09-dbn-features` serves as a feature provider. Observations in Hermes are always real adapter outputs — never invented.
++- **04. ConvLSTM Wear Prognostics** (`m02-convlstm-wear`) - DBN feature hierarchy for the wear model
++- **14. MLP RUL Regression** (`m17-mlp-rul`) - learned features into the RUL regressor
+ 
+-To run this model inside the platform (Python ≥ 3.10):
++Related pages: [04 ConvLSTM Wear](https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics), [14 MLP RUL](https://github.com/rajaram-2005/wt-pm-mlp-rul-regression)
++
++## Standalone setup
+ 
+ ```bash
+-pip install "wt-pm[torch] @ git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
+-wt-pm fetch-models --dir ./external      # clones this repo and its siblings into ./external
+-export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
+-wt-pm inspect                            # m09-dbn-features should report "available": true
++pip install -r requirements.txt
++python model.py
+ ```
+ 
+-More on how the 25 models fit together: [platform architecture](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md) and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md).
++This repository stays independently runnable. The platform wraps the original `model.py` through its adapter - it does not replace, patch or fork this code.
++
++## Run it inside the platform
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-dbn-feature-extraction`
+-- **Category:** RUL Prognostics
+-- **Model:** 5-layer DBN (~5.5K parameters)
+-- **Dependencies:** `torch numpy`
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clone this repo and its siblings
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m09-dbn-features should report available
++wt-pm serve --port 8100                  # HTTP API + command centre
++```
+ 
+ ## Honest limits
+ 
+-- Synthetic fleet only: the campaign is generated from turbine-specific wear curves (wear exponent and life are drawn per turbine); no field datasets or trained weights ship in this repository.
+-- Reported metrics come from held-out **campaign days** of the synthetic fleet (test R² 0.874, RMSE 0.038 normalized ≈ 10.2 days at the fleet-mean 270-day life). Platform metrics come from **simulator** records (fidelity rung 1, see the [fidelity ladder](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/docs/fidelity_ladder.md)), not certified asset performance.
+-- Day-scale errors use the fleet-mean life (270 days) as the conversion of normalized RUL; per-turbine day errors vary with individual service life.
+-- Bernoulli RBMs are pretrained on thresholded sensor bits (they need contrasty inputs to learn detectors) and fine-tuned on mean-field probabilities; the platform adapter feeds its own sigmoid-standardized features to the same API.
++- No GPU path; 3 s latency keeps it on the server
++- CD-1 bias is accepted, not corrected - numbers are reproducible, not optimal
++
++Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets and simulator fault labels. Results are comparable **within** this collection and are not field-validated turbine control.
++
++## The other 24 pages
++
++- 01. [1D-CNN Bearing Vibration](https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration) - `m01-1dcnn-bearing`
++- 02. [AeroZip Autoencoder Compressor](https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor) - `m23-aerozip`
++- 03. [Contrastive SSL Vibration](https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration) - `m08-contrastive-ssl`
++- 04. [ConvLSTM Wear Prognostics](https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics) - `m02-convlstm-wear`
++- 06. [Deep SVDD Boundary](https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary) - `m13-deep-svdd`
++- 07. [Digital Twin Surrogate](https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate) - `m19-digital-twin`
++- 08. [GNN Turbine Cascade](https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade) - `m20-gnn-cascade`
++- 09. [GRU SCADA Telemetry](https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry) - `m04-gru-scada-telemetry`
++- 10. [HMM Degradation States](https://github.com/rajaram-2005/wt-pm-hmm-degradation-states) - `m15-hmm-degradation`
++- 11. [Informer Long Sequence](https://github.com/rajaram-2005/wt-pm-informer-long-sequence) - `m06-informer-forecast`
++- 12. [Isolation Forest Telemetry](https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry) - `m14-isolation-forest`
++- 13. [LSTM SCADA Anomaly (reference contract hub)](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - `m05-lstm-scada-anomaly`
++- 14. [MLP RUL Regression](https://github.com/rajaram-2005/wt-pm-mlp-rul-regression) - `m17-mlp-rul`
++- 15. [Particle Filter RUL](https://github.com/rajaram-2005/wt-pm-particle-filter-rul) - `m16-particle-filter-rul`
++- 16. [PG-BNN Physics-Guided Bayesian](https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine) - `m18-pg-bnn`
++- 17. [Quantized MobileNet Edge](https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge) - `m24-quantized-edge`
++- 18. [Random Forest Telemetry](https://github.com/rajaram-2005/wt-pm-random-forest-telemetry) - `m10-random-forest`
++- 19. [SNN Event Vibration](https://github.com/rajaram-2005/wt-pm-snn-event-vibration) - `m07-snn-vibration`
++- 20. [SVM-RBF Generator Stator](https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator) - `m12-svm-generator`
++- 21. [TCN Power Curve](https://github.com/rajaram-2005/wt-pm-tcn-power-curve) - `m03-tcn-power-curve`
++- 22. [TinyML ESP32 Safety Relay](https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay) - `m25-tinyml-safety`
++- 23. [VAE Reconstruction Loss](https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss) - `m22-vae-reconstruction`
++- 24. [XAI SHAP Interpretable](https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable) - `m21-xai-shap`
++- 25. [XGBoost Tabular Faults](https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults) - `m11-xgboost-tabular`
++
++---
++
++Part of the [WT-PM collection](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - 25 models, one contract. Generated from `deployment/models.catalog.json`.
+diff --git a/docs/index.html b/docs/index.html
+index 72a4ea9..cdd3b8a 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -1,40 +1,168 @@
+ <!DOCTYPE html>
+-<html lang="en">
+-<head>
+-<meta charset="UTF-8">
+-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>dbn-feature-extraction — RUL Prognostics</title>
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++<html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>DBN Feature Extraction - WT-PM model 05 of 25</title>
++<meta name="description" content="A stack of Restricted Boltzmann Machines trained greedily layer by layer, then read out as a feature hierarchy for wear tracking. It is the classic pr">
+ <style>
+-  body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+-  .hero{padding:48px 24px;max-width:900px;margin:auto}
+-  .badge{display:inline-block;background:#1e293b;color:#38bdf8;padding:6px 12px;border-radius:999px;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+-  h1{font-size:42px;margin:12px 0 8px}
+-  p{color:#94a3b8;line-height:1.6}
+-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:24px}
+-  code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}
+-  a.btn{display:inline-block;margin-top:16px;background:#38bdf8;color:#0f172a;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600}
+-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+-  @media(max-width:700px){.grid{grid-template-columns:1fr}}
+-</style>
+-</head>
+-<body>
+-  <div class="hero">
+-    <span class="badge">RUL Prognostics</span>
+-    <h1>wt-pm-dbn-feature-extraction</h1>
+-    <p>Deep Belief Network using stacked Restricted Boltzmann Machines for automated feature hierarchy in wear tracking.</p>
+-    <div class="card">
+-      <strong>Quick start</strong><br>
+-      <code>pip install -r requirements.txt</code><br><br>
+-      <code>python model.py</code>
+-      <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>torch numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
+-        <div><strong>Platform adapter</strong><br><code>m09-dbn-features</code></div>
+-        <div><strong>Status</strong><br>integrated (CD-1 pretraining in repo)</div>
+-      </div>
+-      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">View on GitHub</a>
+-    </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture and synthetic-fleet training — no field datasets or trained weights ship here. Platform metrics come from simulator records.</p>
+-  </div>
+-</body>
+-</html>
+\ No newline at end of file
++:root{
++  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
++  --teal:#2ee6c8; --amber:#f0b429;
++}
++*{box-sizing:border-box}
++body{margin:0;background:var(--bg);color:var(--ink);
++  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
++a{color:var(--teal);text-decoration:none}
++a:hover{text-decoration:underline}
++.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
++header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
++.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
++.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
++.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
++.pill.adapter{color:var(--teal)}
++.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
++h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
++.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
++h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
++h3{font-size:16px;margin:22px 0 6px}
++p{color:#b7d0cc}
++table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
++th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
++th{color:var(--muted);font-weight:600;width:210px}
++td{color:#c9ddd9}
++code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
++pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
++.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
++.card h3{margin-top:0;color:var(--teal)}
++ul{color:#b7d0cc}
++li{margin:5px 0}
++.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
++.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
++.fleet a:hover{border-color:var(--teal);text-decoration:none}
++.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
++.fleet a span{color:var(--muted);font-size:11.5px}
++.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
++.edges li b{color:var(--ink)}
++.limits li{color:#e0b7b7}
++footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
++.note{color:var(--muted);font-size:13.5px}
++.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
++.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
++.btn.ghost{background:transparent;color:var(--ink)}
++</style></head><body><div class="wrap">
++<header><div class="crumbs">
++<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
++<span>collection of 25 models</span>
++<span class="pill num">MODEL 05 / 25</span>
++<span class="pill adapter">m09-dbn-features</span>
++<span class="pill status">integrated (platform supplies its own CD-1 loop; the repo ships one too)</span>
++<span class="pill" style="color:#9d7bf5;border-color:#9d7bf555">RUL Prognostics</span>
++</div>
++<h1>DBN Feature Extraction</h1>
++<p class="lede">A stack of Restricted Boltzmann Machines trained greedily layer by layer, then read out as a feature hierarchy for wear tracking. It is the classic pre-deep-learning answer to 'we do not have enough labels', and it still earns its place because its features are interpretable as successive energy minima.</p>
++<div class="cta">
++<a class="btn" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">View on GitHub</a>
++<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
++<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
++</div>
++</header>
++<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
++<h2>Model</h2>
++<ul>
++<li><code>RBM / DBN classes in model.py</code></li>
++<li><code>Contrastive-divergence (CD-1) training loop</code> - present in the repo and re-implemented by the adapter</li>
++</ul>
++<table>
++<tr><th>RBM</th><td>Visible-hidden bipartite energy model; each unit is a Bernoulli or Gaussian variable</td></tr>
++<tr><th>Greedy pretraining</th><td>CD-1 Gibbs sampling per layer - one negative-phase step is enough for a usable gradient estimate</td></tr>
++<tr><th>Readout</th><td>Upper-layer activations become features for the RUL regressors</td></tr>
++</table>
++<h2>Advanced concepts</h2>
++<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
++<div class="card">
++<h3>Energy-based models</h3>
++<p>An RBM defines an energy for every visible-hidden configuration; learning lowers the energy of data and raises it elsewhere. The gradient needs the model's own expectation, which is intractable - that is the whole reason for contrastive divergence.</p>
++</div>
++<div class="card">
++<h3>Why one Gibbs step is enough</h3>
++<p>CD-1 is biased but cheap: it does not follow the true gradient, yet it reliably moves parameters in a useful direction. The bias is why DBNs were displaced by backpropagation-based autoencoders, and why the repo's CD-1 loop matters for reproducing the numbers.</p>
++</div>
++<div class="card">
++<h3>Layerwise features as a ladder</h3>
++<p>Each layer's activations are a legitimate feature set, so you can stop early for a cheaper model. The platform treats the DBN as a feature provider, which is how it can serve an RUL regressor without retraining anything downstream.</p>
++</div>
++<h2>Platform contract</h2>
++<table>
++<tr><th>Input (adapter view)</th><td>feature vectors (no labels required for pretraining)</td></tr>
++<tr><th>Output</th><td>extracted_features (hierarchical activations)</td></tr>
++<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
++<tr><th>Typical latency</th><td>3000 ms</td></tr>
++<tr><th>Deployment targets</th><td>cloud</td></tr>
++<tr><th>Requirements</th><td>torch</td></tr>
++<tr><th>Fallback</th><td>none - leaf model</td></tr>
++<tr><th>Subsystem focus</th><td>whole turbine</td></tr>
++<tr><th>Hermes tool</th><td><code>feature source for rul / diagnose</code></td></tr>
++</table>
++<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
++<h2>Platform layers</h2>
++<table>
++<tr><th>Fusion</th><td>Feature extractor feeding the m17 RUL regressor and the tabular voters</td></tr>
++<tr><th>Protocol</th><td>Pretraining masks exclude held-out rows entirely, so unsupervised structure cannot leak test labels</td></tr>
++<tr><th>Evaluation</th><td>Judged by downstream RUL error, not by reconstruction loss - a lower CD-1 objective is not automatically a better feature</td></tr>
++<tr><th>XAI</th><td>Layer activations are inspectable, which makes the DBN the most auditable feature extractor in the collection</td></tr>
++</table>
++<h2>How it connects to the other 24</h2>
++<ul class="edges">
++<li>&rarr; <b>04. ConvLSTM Wear Prognostics</b> <span class="note">(m02-convlstm-wear)</span> - DBN feature hierarchy for the wear model</li>
++<li>&rarr; <b>14. MLP RUL Regression</b> <span class="note">(m17-mlp-rul)</span> - learned features into the RUL regressor</li>
++</ul>
++<h2>Honest limits</h2><ul class="limits">
++<li>No GPU path; 3 s latency keeps it on the server</li>
++<li>CD-1 bias is accepted, not corrected - numbers are reproducible, not optimal</li>
++</ul>
++<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
++<h2>Run it</h2>
++<pre>pip install -r requirements.txt
++python model.py
++
++# inside the unified platform
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external
++export WTPM_EXTERNAL_DIR=$PWD/external
++wt-pm inspect      # m09-dbn-features should report available
++wt-pm serve --port 8100</pre>
++<h2>All 25 pages</h2>
++<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
++<div class="grid fleet">
++<a class="" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
++<a class="here" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
++</div>
++<footer>
++<p>Model 05 of 25 &middot; adapter <code>m09-dbn-features</code> &middot; RUL Prognostics &middot; status integrated (platform supplies its own CD-1 loop; the repo ships one too)</p>
++<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
++<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
++</footer>
++</div></body></html>
+diff --git a/index.html b/index.html
+index 72a4ea9..cdd3b8a 100644
+--- a/index.html
++++ b/index.html
+@@ -1,40 +1,168 @@
+ <!DOCTYPE html>
+-<html lang="en">
+-<head>
+-<meta charset="UTF-8">
+-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>dbn-feature-extraction — RUL Prognostics</title>
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++<html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>DBN Feature Extraction - WT-PM model 05 of 25</title>
++<meta name="description" content="A stack of Restricted Boltzmann Machines trained greedily layer by layer, then read out as a feature hierarchy for wear tracking. It is the classic pr">
+ <style>
+-  body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+-  .hero{padding:48px 24px;max-width:900px;margin:auto}
+-  .badge{display:inline-block;background:#1e293b;color:#38bdf8;padding:6px 12px;border-radius:999px;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+-  h1{font-size:42px;margin:12px 0 8px}
+-  p{color:#94a3b8;line-height:1.6}
+-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:24px}
+-  code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}
+-  a.btn{display:inline-block;margin-top:16px;background:#38bdf8;color:#0f172a;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600}
+-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+-  @media(max-width:700px){.grid{grid-template-columns:1fr}}
+-</style>
+-</head>
+-<body>
+-  <div class="hero">
+-    <span class="badge">RUL Prognostics</span>
+-    <h1>wt-pm-dbn-feature-extraction</h1>
+-    <p>Deep Belief Network using stacked Restricted Boltzmann Machines for automated feature hierarchy in wear tracking.</p>
+-    <div class="card">
+-      <strong>Quick start</strong><br>
+-      <code>pip install -r requirements.txt</code><br><br>
+-      <code>python model.py</code>
+-      <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>torch numpy</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore, README.md</div>
+-        <div><strong>Platform adapter</strong><br><code>m09-dbn-features</code></div>
+-        <div><strong>Status</strong><br>integrated (CD-1 pretraining in repo)</div>
+-      </div>
+-      <a class="btn" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">View on GitHub</a>
+-    </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Architecture and synthetic-fleet training — no field datasets or trained weights ship here. Platform metrics come from simulator records.</p>
+-  </div>
+-</body>
+-</html>
+\ No newline at end of file
++:root{
++  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
++  --teal:#2ee6c8; --amber:#f0b429;
++}
++*{box-sizing:border-box}
++body{margin:0;background:var(--bg);color:var(--ink);
++  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
++a{color:var(--teal);text-decoration:none}
++a:hover{text-decoration:underline}
++.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
++header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
++.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
++.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
++.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
++.pill.adapter{color:var(--teal)}
++.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
++h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
++.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
++h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
++h3{font-size:16px;margin:22px 0 6px}
++p{color:#b7d0cc}
++table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
++th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
++th{color:var(--muted);font-weight:600;width:210px}
++td{color:#c9ddd9}
++code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
++pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
++.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
++.card h3{margin-top:0;color:var(--teal)}
++ul{color:#b7d0cc}
++li{margin:5px 0}
++.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
++.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
++.fleet a:hover{border-color:var(--teal);text-decoration:none}
++.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
++.fleet a span{color:var(--muted);font-size:11.5px}
++.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
++.edges li b{color:var(--ink)}
++.limits li{color:#e0b7b7}
++footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
++.note{color:var(--muted);font-size:13.5px}
++.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
++.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
++.btn.ghost{background:transparent;color:var(--ink)}
++</style></head><body><div class="wrap">
++<header><div class="crumbs">
++<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
++<span>collection of 25 models</span>
++<span class="pill num">MODEL 05 / 25</span>
++<span class="pill adapter">m09-dbn-features</span>
++<span class="pill status">integrated (platform supplies its own CD-1 loop; the repo ships one too)</span>
++<span class="pill" style="color:#9d7bf5;border-color:#9d7bf555">RUL Prognostics</span>
++</div>
++<h1>DBN Feature Extraction</h1>
++<p class="lede">A stack of Restricted Boltzmann Machines trained greedily layer by layer, then read out as a feature hierarchy for wear tracking. It is the classic pre-deep-learning answer to 'we do not have enough labels', and it still earns its place because its features are interpretable as successive energy minima.</p>
++<div class="cta">
++<a class="btn" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">View on GitHub</a>
++<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
++<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
++</div>
++</header>
++<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
++<h2>Model</h2>
++<ul>
++<li><code>RBM / DBN classes in model.py</code></li>
++<li><code>Contrastive-divergence (CD-1) training loop</code> - present in the repo and re-implemented by the adapter</li>
++</ul>
++<table>
++<tr><th>RBM</th><td>Visible-hidden bipartite energy model; each unit is a Bernoulli or Gaussian variable</td></tr>
++<tr><th>Greedy pretraining</th><td>CD-1 Gibbs sampling per layer - one negative-phase step is enough for a usable gradient estimate</td></tr>
++<tr><th>Readout</th><td>Upper-layer activations become features for the RUL regressors</td></tr>
++</table>
++<h2>Advanced concepts</h2>
++<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
++<div class="card">
++<h3>Energy-based models</h3>
++<p>An RBM defines an energy for every visible-hidden configuration; learning lowers the energy of data and raises it elsewhere. The gradient needs the model's own expectation, which is intractable - that is the whole reason for contrastive divergence.</p>
++</div>
++<div class="card">
++<h3>Why one Gibbs step is enough</h3>
++<p>CD-1 is biased but cheap: it does not follow the true gradient, yet it reliably moves parameters in a useful direction. The bias is why DBNs were displaced by backpropagation-based autoencoders, and why the repo's CD-1 loop matters for reproducing the numbers.</p>
++</div>
++<div class="card">
++<h3>Layerwise features as a ladder</h3>
++<p>Each layer's activations are a legitimate feature set, so you can stop early for a cheaper model. The platform treats the DBN as a feature provider, which is how it can serve an RUL regressor without retraining anything downstream.</p>
++</div>
++<h2>Platform contract</h2>
++<table>
++<tr><th>Input (adapter view)</th><td>feature vectors (no labels required for pretraining)</td></tr>
++<tr><th>Output</th><td>extracted_features (hierarchical activations)</td></tr>
++<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
++<tr><th>Typical latency</th><td>3000 ms</td></tr>
++<tr><th>Deployment targets</th><td>cloud</td></tr>
++<tr><th>Requirements</th><td>torch</td></tr>
++<tr><th>Fallback</th><td>none - leaf model</td></tr>
++<tr><th>Subsystem focus</th><td>whole turbine</td></tr>
++<tr><th>Hermes tool</th><td><code>feature source for rul / diagnose</code></td></tr>
++</table>
++<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
++<h2>Platform layers</h2>
++<table>
++<tr><th>Fusion</th><td>Feature extractor feeding the m17 RUL regressor and the tabular voters</td></tr>
++<tr><th>Protocol</th><td>Pretraining masks exclude held-out rows entirely, so unsupervised structure cannot leak test labels</td></tr>
++<tr><th>Evaluation</th><td>Judged by downstream RUL error, not by reconstruction loss - a lower CD-1 objective is not automatically a better feature</td></tr>
++<tr><th>XAI</th><td>Layer activations are inspectable, which makes the DBN the most auditable feature extractor in the collection</td></tr>
++</table>
++<h2>How it connects to the other 24</h2>
++<ul class="edges">
++<li>&rarr; <b>04. ConvLSTM Wear Prognostics</b> <span class="note">(m02-convlstm-wear)</span> - DBN feature hierarchy for the wear model</li>
++<li>&rarr; <b>14. MLP RUL Regression</b> <span class="note">(m17-mlp-rul)</span> - learned features into the RUL regressor</li>
++</ul>
++<h2>Honest limits</h2><ul class="limits">
++<li>No GPU path; 3 s latency keeps it on the server</li>
++<li>CD-1 bias is accepted, not corrected - numbers are reproducible, not optimal</li>
++</ul>
++<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
++<h2>Run it</h2>
++<pre>pip install -r requirements.txt
++python model.py
++
++# inside the unified platform
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external
++export WTPM_EXTERNAL_DIR=$PWD/external
++wt-pm inspect      # m09-dbn-features should report available
++wt-pm serve --port 8100</pre>
++<h2>All 25 pages</h2>
++<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
++<div class="grid fleet">
++<a class="" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
++<a class="here" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
++</div>
++<footer>
++<p>Model 05 of 25 &middot; adapter <code>m09-dbn-features</code> &middot; RUL Prognostics &middot; status integrated (platform supplies its own CD-1 loop; the repo ships one too)</p>
++<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
++<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
++</footer>
++</div></body></html>
+-- 
+2.39.5
+

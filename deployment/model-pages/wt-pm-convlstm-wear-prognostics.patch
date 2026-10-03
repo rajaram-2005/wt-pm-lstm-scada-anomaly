@@ -1,0 +1,637 @@
+From 5175aeedce623bf157c765449fb67d9aaa75e851 Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 05:40:16 +0000
+Subject: [PATCH] Advanced-concepts page and platform wiring
+
+Generated from deployment/models.catalog.json in the reference repository, so
+this page agrees with the other 24 on collection numbering, adapter id, status,
+contract and honest limits.
+
+- README.md: collection position (both numbering schemes), architecture table,
+  advanced concepts with failure modes, platform contract, platform-layer
+  participation, cross-links to the other 24 pages, standalone + platform setup,
+  honest limits.
+- index.html and docs/index.html: the same content as a self-contained landing
+  page - no external CSS/JS/assets - with a working View on GitHub link and
+  links to all 25 repositories.
+- model.py and requirements.txt untouched; the repository stays independently
+  runnable.
+---
+ README.md       | 177 +++++++++++++++++++++++++++++++-----------
+ docs/index.html | 202 +++++++++++++++++++++++++++++++++++++++---------
+ index.html      | 202 +++++++++++++++++++++++++++++++++++++++---------
+ 3 files changed, 464 insertions(+), 117 deletions(-)
+
+diff --git a/README.md b/README.md
+index 92b73ad..e9bf5ff 100644
+--- a/README.md
++++ b/README.md
+@@ -1,53 +1,140 @@
+-# CONVLSTM-WEAR-PROGNOSTICS
+-> **Category:** RUL Prognostics
++# ConvLSTM Wear Prognostics
+ 
+-## Description
+-Convolutional LSTM extracting joint spatiotemporal representations for continuous mechanical degradation tracking.
++> **Category:** RUL Prognostics  
++> **Platform adapter:** `m02-convlstm-wear`  
++> **Status:** partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)  
++> **Collection position:** model **04** of 25 (alphabetical)
+ 
+-**Model 4** extends the original scaffold (2-layer ConvLSTM) to a **4-layer stack** for deeper temporal-hierarchical wear feature extraction:
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
+ 
+-```
+-Input (10, 16, 16, 1)   # 10-frame window of 16x16 wear maps
+-  └─ ConvLSTM2D(32) + BatchNorm     # fine spatiotemporal features
+-  └─ ConvLSTM2D(48) + BatchNorm     # mid-level degradation patterns
+-  └─ ConvLSTM2D(48) + BatchNorm     # global wear-rate representation
+-  └─ ConvLSTM2D(32) + BatchNorm     # regression-ready summary
+-  └─ Flatten → Dense(64, relu) → Dense(1)   # normalized RUL output
+-```
++A ConvLSTM2D stack that carries a two-dimensional wear field forward in time, keeping spatial structure that a plain LSTM would flatten away. It is the collection's spatiotemporal degradation tracker - and its bluntest example of how a research assumption meets a data reality.
++
++## How this page fits the collection
++
++The WT-PM collection numbers its 25 repositories **alphabetically 01-25** - that is the number on this page - and gives each one a **task-based adapter id** (`m02-convlstm-wear`) used by the platform registry, the `wt-pm` CLI and the fusion engine. Both are printed on every page so the ecosystem graph and the registry can be read against each other.
++
++- Repository: <https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics>
++- Landing page: <https://rajaram-2005.github.io/wt-pm-convlstm-wear-prognostics/>
++- Ecosystem graph: <https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html>
++- Platform architecture: <https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md>
++- Per-model table: <https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md>
++
++## Model
++
++- `ConvLSTM2D model definition in model.py`
++- `Platform adapter builds recurrence images from the 12-channel window`
++
++| Block | Detail |
++|---|---|
++| Input | Upstream expects (10, 64, 64, 1) wear maps - a sequence of ten 64x64 frames |
++| Recurrent convolution | ConvLSTM2D cells replace the dense gates of an LSTM with convolutions, so hidden state keeps a spatial extent |
++| Head | Regression onto remaining useful life |
++
++## Advanced concepts
++
++The ideas this model actually leans on - stated with their failure modes, not as marketing.
++
++### Convolutional gates
++
++Every gate in a ConvLSTM is itself a convolution, so the cell learns where to remember as well as when. That is what makes it suitable for a degradation field, and what makes it 10-100x more expensive than a dense recurrent layer.
++
++### The missing 64x64 tensor
++
++No data source in the collection produces wear maps. Rather than silently fabricating them, the adapter builds 16x16 channel-recurrence images and the model is marked partial. The honest statement is: the recurrence works, the upstream spatial claim is untested.
++
++### RUL uncertainty is not optional
++
++A point estimate of remaining life is almost useless for planning without an interval. This adapter returns rul_hours only; the probabilistic statement comes from m16, which fuses these observations into a posterior.
++
++## Platform contract
++
++| | |
++|---|---|
++| Input (adapter view) | windows -> 16x16 channel-recurrence images (the platform's substitute for unavailable wear maps) |
++| Output (`WTDataSchema`) | rul_hours |
++| Record format | `wt-pm.platform.v1` |
++| Typical latency | 15000 ms |
++| Deployment targets | cloud |
++| Resource requirements | tensorflow |
++| Fallback | `m17-mlp-rul` |
++| Subsystem focus | whole turbine |
++| Hermes tool | `rul` |
+ 
+-- **Optimizer:** Adam (1e-3), MSE loss, MAE tracked
+-- **Callbacks:** EarlyStopping (patience 3, restore best) + ReduceLROnPlateau
+-- **Data:** synthetic accelerated-wear trajectory rendered as 2-D wear maps; sliding windows (stride 2) with **chronological** train/val/test split (15% / 20%) to prevent time leakage
++Records follow the shared `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required; every other field is optional, so a model fills in only what it honestly produces and the fusion layer can tell absence from a zero.
+ 
+-## Structure
++## Platform layers
++
++| Layer | What this model does there |
++|---|---|
++| **Fusion** | One of the RUL observations consumed by the m16 particle filter |
++| **Evaluation** | Scored with rul_metrics (MAE / RMSE / asymmetric penalty), not with classification metrics |
++| **Hermes** | Feeds the rul tool alongside m15 states and m17 baseline |
++| **Fallback** | Falls back to m17-mlp-rul when TensorFlow is unavailable - the platform never fails a question because a heavy model is missing |
++
++Layers are described once, in the catalog, and referenced by every model that participates in them: fusion, calibrated uncertainty, drift and data trust, explainability, physics constraints, the safety gate, the evaluation protocol and the Hermes agent.
++
++## How it connects to the other 24
++
++**Receives from**
++
++- **01. 1D-CNN Bearing Vibration** (`m01-1dcnn-bearing`) - bearing fault labels drive wear tracking
++- **05. DBN Feature Extraction** (`m09-dbn-features`) - DBN feature hierarchy for the wear model
++
++Related pages: [01 1D-CNN Bearing](https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration), [05 DBN Features](https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction)
++
++## Standalone setup
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+-├── model.py           # Model 4 architecture + data synthesis + training script
+-├── requirements.txt   # Dependencies
+-├── results/           # Run outputs (metrics JSON, best .h5 weights) — created at runtime
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++
++This repository stays independently runnable. The platform wraps the original `model.py` through its adapter - it does not replace, patch or fork this code.
++
++## Run it inside the platform
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clone this repo and its siblings
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m02-convlstm-wear should report available
++wt-pm serve --port 8100                  # HTTP API + command centre
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
+-
+-2. Run Model 4 (data synthesis → training → evaluation):
+-   ```bash
+-   python model.py
+-   ```
+-
+-Outputs:
+-- Printed evaluation table (RMSE / MAE / R² on train/val/test, in cycle units)
+-- `results/model4_metrics.json` — full metrics summary
+-- `results/model4_weights.h5` — best weights (excluded from git via `.gitignore`)
+-
+-## Model Info
+-- **Repo name:** `wt-pm-convlstm-wear-prognostics`
+-- **Category:** RUL Prognostics
+-- **Model:** 4-layer ConvLSTM (~0.96M parameters)
+-- **Dependencies:** `tensorflow numpy pandas`
+-
+-> Scaffold generated locally for inspection — no GitHub API call made.
++## Honest limits
++
++- Partial: upstream 64x64 wear-map contract is not satisfiable with available data
++- 15 s typical latency - cloud only, never in the safety path
++
++Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets and simulator fault labels. Results are comparable **within** this collection and are not field-validated turbine control.
++
++## The other 24 pages
++
++- 01. [1D-CNN Bearing Vibration](https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration) - `m01-1dcnn-bearing`
++- 02. [AeroZip Autoencoder Compressor](https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor) - `m23-aerozip`
++- 03. [Contrastive SSL Vibration](https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration) - `m08-contrastive-ssl`
++- 05. [DBN Feature Extraction](https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction) - `m09-dbn-features`
++- 06. [Deep SVDD Boundary](https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary) - `m13-deep-svdd`
++- 07. [Digital Twin Surrogate](https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate) - `m19-digital-twin`
++- 08. [GNN Turbine Cascade](https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade) - `m20-gnn-cascade`
++- 09. [GRU SCADA Telemetry](https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry) - `m04-gru-scada-telemetry`
++- 10. [HMM Degradation States](https://github.com/rajaram-2005/wt-pm-hmm-degradation-states) - `m15-hmm-degradation`
++- 11. [Informer Long Sequence](https://github.com/rajaram-2005/wt-pm-informer-long-sequence) - `m06-informer-forecast`
++- 12. [Isolation Forest Telemetry](https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry) - `m14-isolation-forest`
++- 13. [LSTM SCADA Anomaly (reference contract hub)](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - `m05-lstm-scada-anomaly`
++- 14. [MLP RUL Regression](https://github.com/rajaram-2005/wt-pm-mlp-rul-regression) - `m17-mlp-rul`
++- 15. [Particle Filter RUL](https://github.com/rajaram-2005/wt-pm-particle-filter-rul) - `m16-particle-filter-rul`
++- 16. [PG-BNN Physics-Guided Bayesian](https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine) - `m18-pg-bnn`
++- 17. [Quantized MobileNet Edge](https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge) - `m24-quantized-edge`
++- 18. [Random Forest Telemetry](https://github.com/rajaram-2005/wt-pm-random-forest-telemetry) - `m10-random-forest`
++- 19. [SNN Event Vibration](https://github.com/rajaram-2005/wt-pm-snn-event-vibration) - `m07-snn-vibration`
++- 20. [SVM-RBF Generator Stator](https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator) - `m12-svm-generator`
++- 21. [TCN Power Curve](https://github.com/rajaram-2005/wt-pm-tcn-power-curve) - `m03-tcn-power-curve`
++- 22. [TinyML ESP32 Safety Relay](https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay) - `m25-tinyml-safety`
++- 23. [VAE Reconstruction Loss](https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss) - `m22-vae-reconstruction`
++- 24. [XAI SHAP Interpretable](https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable) - `m21-xai-shap`
++- 25. [XGBoost Tabular Faults](https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults) - `m11-xgboost-tabular`
++
++---
++
++Part of the [WT-PM collection](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - 25 models, one contract. Generated from `deployment/models.catalog.json`.
+diff --git a/docs/index.html b/docs/index.html
+index dcc721c..cc4bc35 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -1,38 +1,168 @@
+ <!DOCTYPE html>
+-<html lang="en">
+-<head>
+-<meta charset="UTF-8">
+-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>convlstm-wear-prognostics — RUL Prognostics</title>
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++<html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>ConvLSTM Wear Prognostics - WT-PM model 04 of 25</title>
++<meta name="description" content="A ConvLSTM2D stack that carries a two-dimensional wear field forward in time, keeping spatial structure that a plain LSTM would flatten away. It is th">
+ <style>
+-  body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+-  .hero{padding:48px 24px;max-width:900px;margin:auto}
+-  .badge{display:inline-block;background:#1e293b;color:#38bdf8;padding:6px 12px;border-radius:999px;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+-  h1{font-size:42px;margin:12px 0 8px}
+-  p{color:#94a3b8;line-height:1.6}
+-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:24px}
+-  code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}
+-  a.btn{display:inline-block;margin-top:16px;background:#38bdf8;color:#0f172a;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600}
+-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+-  @media(max-width:700px){.grid{grid-template-columns:1fr}}
+-</style>
+-</head>
+-<body>
+-  <div class="hero">
+-    <span class="badge">RUL Prognostics</span>
+-    <h1>wt-pm-convlstm-wear-prognostics</h1>
+-    <p>Convolutional LSTM extracting joint spatiotemporal representations for continuous mechanical degradation tracking.</p>
+-    <div class="card">
+-      <strong>Quick start</strong><br>
+-      <code>pip install -r requirements.txt</code><br><br>
+-      <code>python model.py</code>
+-      <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>tensorflow numpy pandas</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
+-      </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
+-    </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
+-  </div>
+-</body>
+-</html>
+\ No newline at end of file
++:root{
++  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
++  --teal:#2ee6c8; --amber:#f0b429;
++}
++*{box-sizing:border-box}
++body{margin:0;background:var(--bg);color:var(--ink);
++  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
++a{color:var(--teal);text-decoration:none}
++a:hover{text-decoration:underline}
++.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
++header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
++.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
++.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
++.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
++.pill.adapter{color:var(--teal)}
++.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
++h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
++.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
++h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
++h3{font-size:16px;margin:22px 0 6px}
++p{color:#b7d0cc}
++table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
++th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
++th{color:var(--muted);font-weight:600;width:210px}
++td{color:#c9ddd9}
++code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
++pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
++.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
++.card h3{margin-top:0;color:var(--teal)}
++ul{color:#b7d0cc}
++li{margin:5px 0}
++.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
++.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
++.fleet a:hover{border-color:var(--teal);text-decoration:none}
++.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
++.fleet a span{color:var(--muted);font-size:11.5px}
++.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
++.edges li b{color:var(--ink)}
++.limits li{color:#e0b7b7}
++footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
++.note{color:var(--muted);font-size:13.5px}
++.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
++.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
++.btn.ghost{background:transparent;color:var(--ink)}
++</style></head><body><div class="wrap">
++<header><div class="crumbs">
++<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
++<span>collection of 25 models</span>
++<span class="pill num">MODEL 04 / 25</span>
++<span class="pill adapter">m02-convlstm-wear</span>
++<span class="pill status">partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)</span>
++<span class="pill" style="color:#9d7bf5;border-color:#9d7bf555">RUL Prognostics</span>
++</div>
++<h1>ConvLSTM Wear Prognostics</h1>
++<p class="lede">A ConvLSTM2D stack that carries a two-dimensional wear field forward in time, keeping spatial structure that a plain LSTM would flatten away. It is the collection's spatiotemporal degradation tracker - and its bluntest example of how a research assumption meets a data reality.</p>
++<div class="cta">
++<a class="btn" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">View on GitHub</a>
++<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
++<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
++</div>
++</header>
++<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
++<h2>Model</h2>
++<ul>
++<li><code>ConvLSTM2D model definition in model.py</code></li>
++<li><code>Platform adapter builds recurrence images from the 12-channel window</code></li>
++</ul>
++<table>
++<tr><th>Input</th><td>Upstream expects (10, 64, 64, 1) wear maps - a sequence of ten 64x64 frames</td></tr>
++<tr><th>Recurrent convolution</th><td>ConvLSTM2D cells replace the dense gates of an LSTM with convolutions, so hidden state keeps a spatial extent</td></tr>
++<tr><th>Head</th><td>Regression onto remaining useful life</td></tr>
++</table>
++<h2>Advanced concepts</h2>
++<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
++<div class="card">
++<h3>Convolutional gates</h3>
++<p>Every gate in a ConvLSTM is itself a convolution, so the cell learns where to remember as well as when. That is what makes it suitable for a degradation field, and what makes it 10-100x more expensive than a dense recurrent layer.</p>
++</div>
++<div class="card">
++<h3>The missing 64x64 tensor</h3>
++<p>No data source in the collection produces wear maps. Rather than silently fabricating them, the adapter builds 16x16 channel-recurrence images and the model is marked partial. The honest statement is: the recurrence works, the upstream spatial claim is untested.</p>
++</div>
++<div class="card">
++<h3>RUL uncertainty is not optional</h3>
++<p>A point estimate of remaining life is almost useless for planning without an interval. This adapter returns rul_hours only; the probabilistic statement comes from m16, which fuses these observations into a posterior.</p>
++</div>
++<h2>Platform contract</h2>
++<table>
++<tr><th>Input (adapter view)</th><td>windows -&gt; 16x16 channel-recurrence images (the platform's substitute for unavailable wear maps)</td></tr>
++<tr><th>Output</th><td>rul_hours</td></tr>
++<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
++<tr><th>Typical latency</th><td>15000 ms</td></tr>
++<tr><th>Deployment targets</th><td>cloud</td></tr>
++<tr><th>Requirements</th><td>tensorflow</td></tr>
++<tr><th>Fallback</th><td>m17-mlp-rul</td></tr>
++<tr><th>Subsystem focus</th><td>whole turbine</td></tr>
++<tr><th>Hermes tool</th><td><code>rul</code></td></tr>
++</table>
++<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
++<h2>Platform layers</h2>
++<table>
++<tr><th>Fusion</th><td>One of the RUL observations consumed by the m16 particle filter</td></tr>
++<tr><th>Evaluation</th><td>Scored with rul_metrics (MAE / RMSE / asymmetric penalty), not with classification metrics</td></tr>
++<tr><th>Hermes</th><td>Feeds the rul tool alongside m15 states and m17 baseline</td></tr>
++<tr><th>Fallback</th><td>Falls back to m17-mlp-rul when TensorFlow is unavailable - the platform never fails a question because a heavy model is missing</td></tr>
++</table>
++<h2>How it connects to the other 24</h2>
++<ul class="edges">
++<li><b>01. 1D-CNN Bearing Vibration</b> <span class="note">(m01-1dcnn-bearing)</span> &rarr; bearing fault labels drive wear tracking</li>
++<li><b>05. DBN Feature Extraction</b> <span class="note">(m09-dbn-features)</span> &rarr; DBN feature hierarchy for the wear model</li>
++</ul>
++<h2>Honest limits</h2><ul class="limits">
++<li>Partial: upstream 64x64 wear-map contract is not satisfiable with available data</li>
++<li>15 s typical latency - cloud only, never in the safety path</li>
++</ul>
++<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
++<h2>Run it</h2>
++<pre>pip install -r requirements.txt
++python model.py
++
++# inside the unified platform
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external
++export WTPM_EXTERNAL_DIR=$PWD/external
++wt-pm inspect      # m02-convlstm-wear should report available
++wt-pm serve --port 8100</pre>
++<h2>All 25 pages</h2>
++<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
++<div class="grid fleet">
++<a class="" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
++<a class="here" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
++</div>
++<footer>
++<p>Model 04 of 25 &middot; adapter <code>m02-convlstm-wear</code> &middot; RUL Prognostics &middot; status partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)</p>
++<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
++<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
++</footer>
++</div></body></html>
+diff --git a/index.html b/index.html
+index dcc721c..cc4bc35 100644
+--- a/index.html
++++ b/index.html
+@@ -1,38 +1,168 @@
+ <!DOCTYPE html>
+-<html lang="en">
+-<head>
+-<meta charset="UTF-8">
+-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>convlstm-wear-prognostics — RUL Prognostics</title>
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++<html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>ConvLSTM Wear Prognostics - WT-PM model 04 of 25</title>
++<meta name="description" content="A ConvLSTM2D stack that carries a two-dimensional wear field forward in time, keeping spatial structure that a plain LSTM would flatten away. It is th">
+ <style>
+-  body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+-  .hero{padding:48px 24px;max-width:900px;margin:auto}
+-  .badge{display:inline-block;background:#1e293b;color:#38bdf8;padding:6px 12px;border-radius:999px;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+-  h1{font-size:42px;margin:12px 0 8px}
+-  p{color:#94a3b8;line-height:1.6}
+-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:24px}
+-  code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}
+-  a.btn{display:inline-block;margin-top:16px;background:#38bdf8;color:#0f172a;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600}
+-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+-  @media(max-width:700px){.grid{grid-template-columns:1fr}}
+-</style>
+-</head>
+-<body>
+-  <div class="hero">
+-    <span class="badge">RUL Prognostics</span>
+-    <h1>wt-pm-convlstm-wear-prognostics</h1>
+-    <p>Convolutional LSTM extracting joint spatiotemporal representations for continuous mechanical degradation tracking.</p>
+-    <div class="card">
+-      <strong>Quick start</strong><br>
+-      <code>pip install -r requirements.txt</code><br><br>
+-      <code>python model.py</code>
+-      <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>tensorflow numpy pandas</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
+-      </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
+-    </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
+-  </div>
+-</body>
+-</html>
+\ No newline at end of file
++:root{
++  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
++  --teal:#2ee6c8; --amber:#f0b429;
++}
++*{box-sizing:border-box}
++body{margin:0;background:var(--bg);color:var(--ink);
++  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
++a{color:var(--teal);text-decoration:none}
++a:hover{text-decoration:underline}
++.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
++header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
++.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
++.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
++.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
++.pill.adapter{color:var(--teal)}
++.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
++h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
++.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
++h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
++h3{font-size:16px;margin:22px 0 6px}
++p{color:#b7d0cc}
++table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
++th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
++th{color:var(--muted);font-weight:600;width:210px}
++td{color:#c9ddd9}
++code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
++pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
++.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
++.card h3{margin-top:0;color:var(--teal)}
++ul{color:#b7d0cc}
++li{margin:5px 0}
++.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
++.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
++.fleet a:hover{border-color:var(--teal);text-decoration:none}
++.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
++.fleet a span{color:var(--muted);font-size:11.5px}
++.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
++.edges li b{color:var(--ink)}
++.limits li{color:#e0b7b7}
++footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
++.note{color:var(--muted);font-size:13.5px}
++.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
++.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
++.btn.ghost{background:transparent;color:var(--ink)}
++</style></head><body><div class="wrap">
++<header><div class="crumbs">
++<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
++<span>collection of 25 models</span>
++<span class="pill num">MODEL 04 / 25</span>
++<span class="pill adapter">m02-convlstm-wear</span>
++<span class="pill status">partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)</span>
++<span class="pill" style="color:#9d7bf5;border-color:#9d7bf555">RUL Prognostics</span>
++</div>
++<h1>ConvLSTM Wear Prognostics</h1>
++<p class="lede">A ConvLSTM2D stack that carries a two-dimensional wear field forward in time, keeping spatial structure that a plain LSTM would flatten away. It is the collection's spatiotemporal degradation tracker - and its bluntest example of how a research assumption meets a data reality.</p>
++<div class="cta">
++<a class="btn" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">View on GitHub</a>
++<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
++<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
++</div>
++</header>
++<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
++<h2>Model</h2>
++<ul>
++<li><code>ConvLSTM2D model definition in model.py</code></li>
++<li><code>Platform adapter builds recurrence images from the 12-channel window</code></li>
++</ul>
++<table>
++<tr><th>Input</th><td>Upstream expects (10, 64, 64, 1) wear maps - a sequence of ten 64x64 frames</td></tr>
++<tr><th>Recurrent convolution</th><td>ConvLSTM2D cells replace the dense gates of an LSTM with convolutions, so hidden state keeps a spatial extent</td></tr>
++<tr><th>Head</th><td>Regression onto remaining useful life</td></tr>
++</table>
++<h2>Advanced concepts</h2>
++<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
++<div class="card">
++<h3>Convolutional gates</h3>
++<p>Every gate in a ConvLSTM is itself a convolution, so the cell learns where to remember as well as when. That is what makes it suitable for a degradation field, and what makes it 10-100x more expensive than a dense recurrent layer.</p>
++</div>
++<div class="card">
++<h3>The missing 64x64 tensor</h3>
++<p>No data source in the collection produces wear maps. Rather than silently fabricating them, the adapter builds 16x16 channel-recurrence images and the model is marked partial. The honest statement is: the recurrence works, the upstream spatial claim is untested.</p>
++</div>
++<div class="card">
++<h3>RUL uncertainty is not optional</h3>
++<p>A point estimate of remaining life is almost useless for planning without an interval. This adapter returns rul_hours only; the probabilistic statement comes from m16, which fuses these observations into a posterior.</p>
++</div>
++<h2>Platform contract</h2>
++<table>
++<tr><th>Input (adapter view)</th><td>windows -&gt; 16x16 channel-recurrence images (the platform's substitute for unavailable wear maps)</td></tr>
++<tr><th>Output</th><td>rul_hours</td></tr>
++<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
++<tr><th>Typical latency</th><td>15000 ms</td></tr>
++<tr><th>Deployment targets</th><td>cloud</td></tr>
++<tr><th>Requirements</th><td>tensorflow</td></tr>
++<tr><th>Fallback</th><td>m17-mlp-rul</td></tr>
++<tr><th>Subsystem focus</th><td>whole turbine</td></tr>
++<tr><th>Hermes tool</th><td><code>rul</code></td></tr>
++</table>
++<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
++<h2>Platform layers</h2>
++<table>
++<tr><th>Fusion</th><td>One of the RUL observations consumed by the m16 particle filter</td></tr>
++<tr><th>Evaluation</th><td>Scored with rul_metrics (MAE / RMSE / asymmetric penalty), not with classification metrics</td></tr>
++<tr><th>Hermes</th><td>Feeds the rul tool alongside m15 states and m17 baseline</td></tr>
++<tr><th>Fallback</th><td>Falls back to m17-mlp-rul when TensorFlow is unavailable - the platform never fails a question because a heavy model is missing</td></tr>
++</table>
++<h2>How it connects to the other 24</h2>
++<ul class="edges">
++<li><b>01. 1D-CNN Bearing Vibration</b> <span class="note">(m01-1dcnn-bearing)</span> &rarr; bearing fault labels drive wear tracking</li>
++<li><b>05. DBN Feature Extraction</b> <span class="note">(m09-dbn-features)</span> &rarr; DBN feature hierarchy for the wear model</li>
++</ul>
++<h2>Honest limits</h2><ul class="limits">
++<li>Partial: upstream 64x64 wear-map contract is not satisfiable with available data</li>
++<li>15 s typical latency - cloud only, never in the safety path</li>
++</ul>
++<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
++<h2>Run it</h2>
++<pre>pip install -r requirements.txt
++python model.py
++
++# inside the unified platform
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external
++export WTPM_EXTERNAL_DIR=$PWD/external
++wt-pm inspect      # m02-convlstm-wear should report available
++wt-pm serve --port 8100</pre>
++<h2>All 25 pages</h2>
++<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
++<div class="grid fleet">
++<a class="" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
++<a class="here" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
++</div>
++<footer>
++<p>Model 04 of 25 &middot; adapter <code>m02-convlstm-wear</code> &middot; RUL Prognostics &middot; status partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)</p>
++<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
++<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
++</footer>
++</div></body></html>
+-- 
+2.39.5
+

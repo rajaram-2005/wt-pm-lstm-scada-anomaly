@@ -37,13 +37,33 @@ runnable and their `model.py` is never touched.
 python deployment/build_model_pages.py --out build/pages      # render all 25
 bash deployment/rollout_all.sh --dry-run                      # what would happen
 bash deployment/rollout_all.sh                                # branch, PR, merge, gh-pages
-python deployment/check_ecosystem.py --dir /tmp/wtpm-clones --remote --strict
+python deployment/check_ecosystem.py --dir build/pages --remote --strict
 ```
 
 `rollout_all.sh` clones each sibling into `build/rollout/`, applies the rendered
 README + landing page on a branch, opens a PR, merges it, rebuilds `gh-pages` as a
 clean single-file site and re-verifies. It needs a token with **write** access to
 `rajaram-2005/wt-pm-*`; a read-only token fails with HTTP 403 at the push step.
+
+### When the token cannot push
+
+[`deployment/model-pages/`](../../deployment/model-pages/) holds **one
+`git am`-able patch per sibling repository** (24 files, generated from the same
+catalog). They apply to each repository's current `main` without any clone-side
+tooling, so a maintainer - or a PR from a machine with write access - can land the
+same pages:
+
+```bash
+bash deployment/model-pages/generate.sh --check   # still applies to origin/main?
+bash deployment/model-pages/apply-all.sh --dry-run
+bash deployment/model-pages/apply-all.sh          # git am -> PR -> merge -> gh-pages
+```
+
+The reference repository (this one) publishes its own site through the `pages`
+workflow: a push to `main` stages `docs/launch/` + `docs/ecosystem.html`, verifies
+all 25 pages against the catalog and deploys. Manual `workflow_dispatch` from a
+feature branch is limited by the `github-pages` environment's branch policy
+(`main` and `gh-pages` are the allowed deployment branches).
 
 ## Models
 

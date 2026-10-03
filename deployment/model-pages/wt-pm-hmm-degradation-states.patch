@@ -1,0 +1,617 @@
+From 3aabca3215bc08417f18af1f3d7dbe74f53e4765 Mon Sep 17 00:00:00 2001
+From: Rajaraman <rajaram-2005@users.noreply.github.com>
+Date: Sat, 3 Oct 2026 05:40:22 +0000
+Subject: [PATCH] Advanced-concepts page and platform wiring
+
+Generated from deployment/models.catalog.json in the reference repository, so
+this page agrees with the other 24 on collection numbering, adapter id, status,
+contract and honest limits.
+
+- README.md: collection position (both numbering schemes), architecture table,
+  advanced concepts with failure modes, platform contract, platform-layer
+  participation, cross-links to the other 24 pages, standalone + platform setup,
+  honest limits.
+- index.html and docs/index.html: the same content as a self-contained landing
+  page - no external CSS/JS/assets - with a working View on GitHub link and
+  links to all 25 repositories.
+- model.py and requirements.txt untouched; the repository stays independently
+  runnable.
+---
+ README.md       | 156 +++++++++++++++++++++++++++++++------
+ docs/index.html | 202 +++++++++++++++++++++++++++++++++++++++---------
+ index.html      | 202 +++++++++++++++++++++++++++++++++++++++---------
+ 3 files changed, 466 insertions(+), 94 deletions(-)
+
+diff --git a/README.md b/README.md
+index 353af39..5b9d3a2 100644
+--- a/README.md
++++ b/README.md
+@@ -1,31 +1,143 @@
+-# HMM-DEGRADATION-STATES
++# HMM Degradation States
++
+ > **Category:** RUL Prognostics  
++> **Platform adapter:** `m15-hmm-degradation`  
++> **Status:** integrated (severity-ordered states)  
++> **Collection position:** model **10** of 25 (alphabetical)
++
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++
++A Gaussian hidden Markov model that infers the unobservable degradation stage behind a continuous health indicator, and emits a probability over discrete states rather than a number. It answers HOW SEVERE in a form a maintenance planner can act on.
++
++## How this page fits the collection
++
++The WT-PM collection numbers its 25 repositories **alphabetically 01-25** - that is the number on this page - and gives each one a **task-based adapter id** (`m15-hmm-degradation`) used by the platform registry, the `wt-pm` CLI and the fusion engine. Both are printed on every page so the ecosystem graph and the registry can be read against each other.
++
++- Repository: <https://github.com/rajaram-2005/wt-pm-hmm-degradation-states>
++- Landing page: <https://rajaram-2005.github.io/wt-pm-hmm-degradation-states/>
++- Ecosystem graph: <https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html>
++- Platform architecture: <https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md>
++- Per-model table: <https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md>
++
++## Model
++
++- `GaussianHMM configuration in model.py`
++- `Platform adapter re-orders states by mean health indicator`
++
++| Block | Detail |
++|---|---|
++| Hidden states | Discrete degradation stages with Gaussian emission per state |
++| Inference | Baum-Welch for parameters, forward-backward for the posterior state distribution given the whole history |
++| Ordering | States are permuted so that index == severity, which makes the label stable across refits and seeds |
++
++## Advanced concepts
++
++The ideas this model actually leans on - stated with their failure modes, not as marketing.
++
++### Latent-state inference
++
++A hidden state is not a cluster. The posterior is computed over the whole sequence with forward-backward, so yesterday's evidence changes today's state estimate - the smoothing a static classifier cannot do.
++
++### Label switching
++
++HMM state indices are arbitrary; refitting with a different seed can swap state 1 and state 3. Sorting states by mean health indicator is what turns a research object into a monotone severity scale the platform can report.
++
++### States seed the filter
++
++The state transition rate is a degradation rate, and m16 consumes it as the process model for a probabilistic RUL posterior. Discrete states plus a continuous filter is the collection's bridge from 'how bad' to 'how long'.
++
++## Platform contract
+ 
+-## Description
+-Hidden Markov Model evaluating discrete unobservable degradation state transitions from continuous SCADA signals.
++| | |
++|---|---|
++| Input (adapter view) | health-indicator series |
++| Output (`WTDataSchema`) | degradation_state + probability(state) |
++| Record format | `wt-pm.platform.v1` |
++| Typical latency | 1500 ms |
++| Deployment targets | cloud |
++| Resource requirements | hmmlearn |
++| Fallback | none - this model is a leaf |
++| Subsystem focus | whole turbine |
++| Hermes tool | `rul / severity` |
+ 
+-## Structure
++Records follow the shared `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required; every other field is optional, so a model fills in only what it honestly produces and the fusion layer can tell absence from a zero.
++
++## Platform layers
++
++| Layer | What this model does there |
++|---|---|
++| **Fusion** | Supplies the degradation_state field that classification and RUL layers attach to |
++| **Hermes** | Where the agent's SEVERE answer comes from - a posterior over states, not a threshold |
++| **RUL** | State transitions seed the m16 particle filter |
++| **Evaluation** | Scored on state-posterior calibration and transition timing, not on point accuracy alone |
++
++Layers are described once, in the catalog, and referenced by every model that participates in them: fusion, calibrated uncertainty, drift and data trust, explainability, physics constraints, the safety gate, the evaluation protocol and the Hermes agent.
++
++## How it connects to the other 24
++
++**Receives from**
++
++- **13. LSTM SCADA Anomaly (reference contract hub)** (`m05-lstm-scada-anomaly`) - anomaly scores feed degradation states
++
++**Feeds**
++
++- **15. Particle Filter RUL** (`m16-particle-filter-rul`) - state transitions seed the particle filter
++
++Related pages: [13 LSTM SCADA](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly), [15 Particle Filter](https://github.com/rajaram-2005/wt-pm-particle-filter-rul)
++
++## Standalone setup
++
++```bash
++pip install -r requirements.txt
++python model.py
+ ```
+-├── model.py           # Core neural network architecture / training script
+-├── requirements.txt   # Dependencies
+-├── .gitignore         # Environment and data exclusions
+-└── README.md          # Project overview
++
++This repository stays independently runnable. The platform wraps the original `model.py` through its adapter - it does not replace, patch or fork this code.
++
++## Run it inside the platform
++
++```bash
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external      # clone this repo and its siblings
++export WTPM_EXTERNAL_DIR=$PWD/external   # adapters import external/<repo>/model.py
++wt-pm inspect                            # m15-hmm-degradation should report available
++wt-pm serve --port 8100                  # HTTP API + command centre
+ ```
+ 
+-## Setup & Execution
+-1. Install dependencies:
+-   ```bash
+-   pip install -r requirements.txt
+-   ```
++## Honest limits
++
++- Standard HMM assumptions: Gaussian emissions, first-order Markov transitions
++- Requires a health indicator that is already monotone in damage
++
++Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets and simulator fault labels. Results are comparable **within** this collection and are not field-validated turbine control.
++
++## The other 24 pages
+ 
+-2. Run the model:
+-   ```bash
+-   python model.py
+-   ```
++- 01. [1D-CNN Bearing Vibration](https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration) - `m01-1dcnn-bearing`
++- 02. [AeroZip Autoencoder Compressor](https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor) - `m23-aerozip`
++- 03. [Contrastive SSL Vibration](https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration) - `m08-contrastive-ssl`
++- 04. [ConvLSTM Wear Prognostics](https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics) - `m02-convlstm-wear`
++- 05. [DBN Feature Extraction](https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction) - `m09-dbn-features`
++- 06. [Deep SVDD Boundary](https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary) - `m13-deep-svdd`
++- 07. [Digital Twin Surrogate](https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate) - `m19-digital-twin`
++- 08. [GNN Turbine Cascade](https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade) - `m20-gnn-cascade`
++- 09. [GRU SCADA Telemetry](https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry) - `m04-gru-scada-telemetry`
++- 11. [Informer Long Sequence](https://github.com/rajaram-2005/wt-pm-informer-long-sequence) - `m06-informer-forecast`
++- 12. [Isolation Forest Telemetry](https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry) - `m14-isolation-forest`
++- 13. [LSTM SCADA Anomaly (reference contract hub)](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - `m05-lstm-scada-anomaly`
++- 14. [MLP RUL Regression](https://github.com/rajaram-2005/wt-pm-mlp-rul-regression) - `m17-mlp-rul`
++- 15. [Particle Filter RUL](https://github.com/rajaram-2005/wt-pm-particle-filter-rul) - `m16-particle-filter-rul`
++- 16. [PG-BNN Physics-Guided Bayesian](https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine) - `m18-pg-bnn`
++- 17. [Quantized MobileNet Edge](https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge) - `m24-quantized-edge`
++- 18. [Random Forest Telemetry](https://github.com/rajaram-2005/wt-pm-random-forest-telemetry) - `m10-random-forest`
++- 19. [SNN Event Vibration](https://github.com/rajaram-2005/wt-pm-snn-event-vibration) - `m07-snn-vibration`
++- 20. [SVM-RBF Generator Stator](https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator) - `m12-svm-generator`
++- 21. [TCN Power Curve](https://github.com/rajaram-2005/wt-pm-tcn-power-curve) - `m03-tcn-power-curve`
++- 22. [TinyML ESP32 Safety Relay](https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay) - `m25-tinyml-safety`
++- 23. [VAE Reconstruction Loss](https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss) - `m22-vae-reconstruction`
++- 24. [XAI SHAP Interpretable](https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable) - `m21-xai-shap`
++- 25. [XGBoost Tabular Faults](https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults) - `m11-xgboost-tabular`
+ 
+-## Model Info
+-- **Repo name:** `wt-pm-hmm-degradation-states`
+-- **Category:** RUL Prognostics
+-- **Dependencies:** `hmmlearn numpy pandas`
++---
+ 
+-> Scaffold generated locally for inspection — no GitHub API call made.
++Part of the [WT-PM collection](https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly) - 25 models, one contract. Generated from `deployment/models.catalog.json`.
+diff --git a/docs/index.html b/docs/index.html
+index cbbcbac..0d99898 100644
+--- a/docs/index.html
++++ b/docs/index.html
+@@ -1,38 +1,168 @@
+ <!DOCTYPE html>
+-<html lang="en">
+-<head>
+-<meta charset="UTF-8">
+-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>hmm-degradation-states — RUL Prognostics</title>
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++<html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>HMM Degradation States - WT-PM model 10 of 25</title>
++<meta name="description" content="A Gaussian hidden Markov model that infers the unobservable degradation stage behind a continuous health indicator, and emits a probability over discr">
+ <style>
+-  body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+-  .hero{padding:48px 24px;max-width:900px;margin:auto}
+-  .badge{display:inline-block;background:#1e293b;color:#38bdf8;padding:6px 12px;border-radius:999px;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+-  h1{font-size:42px;margin:12px 0 8px}
+-  p{color:#94a3b8;line-height:1.6}
+-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:24px}
+-  code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}
+-  a.btn{display:inline-block;margin-top:16px;background:#38bdf8;color:#0f172a;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600}
+-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+-  @media(max-width:700px){.grid{grid-template-columns:1fr}}
+-</style>
+-</head>
+-<body>
+-  <div class="hero">
+-    <span class="badge">RUL Prognostics</span>
+-    <h1>wt-pm-hmm-degradation-states</h1>
+-    <p>Hidden Markov Model evaluating discrete unobservable degradation state transitions from continuous SCADA signals.</p>
+-    <div class="card">
+-      <strong>Quick start</strong><br>
+-      <code>pip install -r requirements.txt</code><br><br>
+-      <code>python model.py</code>
+-      <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>hmmlearn numpy pandas</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
+-      </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
+-    </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
+-  </div>
+-</body>
+-</html>
+\ No newline at end of file
++:root{
++  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
++  --teal:#2ee6c8; --amber:#f0b429;
++}
++*{box-sizing:border-box}
++body{margin:0;background:var(--bg);color:var(--ink);
++  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
++a{color:var(--teal);text-decoration:none}
++a:hover{text-decoration:underline}
++.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
++header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
++.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
++.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
++.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
++.pill.adapter{color:var(--teal)}
++.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
++h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
++.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
++h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
++h3{font-size:16px;margin:22px 0 6px}
++p{color:#b7d0cc}
++table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
++th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
++th{color:var(--muted);font-weight:600;width:210px}
++td{color:#c9ddd9}
++code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
++pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
++.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
++.card h3{margin-top:0;color:var(--teal)}
++ul{color:#b7d0cc}
++li{margin:5px 0}
++.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
++.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
++.fleet a:hover{border-color:var(--teal);text-decoration:none}
++.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
++.fleet a span{color:var(--muted);font-size:11.5px}
++.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
++.edges li b{color:var(--ink)}
++.limits li{color:#e0b7b7}
++footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
++.note{color:var(--muted);font-size:13.5px}
++.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
++.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
++.btn.ghost{background:transparent;color:var(--ink)}
++</style></head><body><div class="wrap">
++<header><div class="crumbs">
++<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
++<span>collection of 25 models</span>
++<span class="pill num">MODEL 10 / 25</span>
++<span class="pill adapter">m15-hmm-degradation</span>
++<span class="pill status">integrated (severity-ordered states)</span>
++<span class="pill" style="color:#9d7bf5;border-color:#9d7bf555">RUL Prognostics</span>
++</div>
++<h1>HMM Degradation States</h1>
++<p class="lede">A Gaussian hidden Markov model that infers the unobservable degradation stage behind a continuous health indicator, and emits a probability over discrete states rather than a number. It answers HOW SEVERE in a form a maintenance planner can act on.</p>
++<div class="cta">
++<a class="btn" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">View on GitHub</a>
++<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
++<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
++</div>
++</header>
++<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
++<h2>Model</h2>
++<ul>
++<li><code>GaussianHMM configuration in model.py</code></li>
++<li><code>Platform adapter re-orders states by mean health indicator</code></li>
++</ul>
++<table>
++<tr><th>Hidden states</th><td>Discrete degradation stages with Gaussian emission per state</td></tr>
++<tr><th>Inference</th><td>Baum-Welch for parameters, forward-backward for the posterior state distribution given the whole history</td></tr>
++<tr><th>Ordering</th><td>States are permuted so that index == severity, which makes the label stable across refits and seeds</td></tr>
++</table>
++<h2>Advanced concepts</h2>
++<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
++<div class="card">
++<h3>Latent-state inference</h3>
++<p>A hidden state is not a cluster. The posterior is computed over the whole sequence with forward-backward, so yesterday's evidence changes today's state estimate - the smoothing a static classifier cannot do.</p>
++</div>
++<div class="card">
++<h3>Label switching</h3>
++<p>HMM state indices are arbitrary; refitting with a different seed can swap state 1 and state 3. Sorting states by mean health indicator is what turns a research object into a monotone severity scale the platform can report.</p>
++</div>
++<div class="card">
++<h3>States seed the filter</h3>
++<p>The state transition rate is a degradation rate, and m16 consumes it as the process model for a probabilistic RUL posterior. Discrete states plus a continuous filter is the collection's bridge from 'how bad' to 'how long'.</p>
++</div>
++<h2>Platform contract</h2>
++<table>
++<tr><th>Input (adapter view)</th><td>health-indicator series</td></tr>
++<tr><th>Output</th><td>degradation_state + probability(state)</td></tr>
++<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
++<tr><th>Typical latency</th><td>1500 ms</td></tr>
++<tr><th>Deployment targets</th><td>cloud</td></tr>
++<tr><th>Requirements</th><td>hmmlearn</td></tr>
++<tr><th>Fallback</th><td>none - leaf model</td></tr>
++<tr><th>Subsystem focus</th><td>whole turbine</td></tr>
++<tr><th>Hermes tool</th><td><code>rul / severity</code></td></tr>
++</table>
++<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
++<h2>Platform layers</h2>
++<table>
++<tr><th>Fusion</th><td>Supplies the degradation_state field that classification and RUL layers attach to</td></tr>
++<tr><th>Hermes</th><td>Where the agent's SEVERE answer comes from - a posterior over states, not a threshold</td></tr>
++<tr><th>RUL</th><td>State transitions seed the m16 particle filter</td></tr>
++<tr><th>Evaluation</th><td>Scored on state-posterior calibration and transition timing, not on point accuracy alone</td></tr>
++</table>
++<h2>How it connects to the other 24</h2>
++<ul class="edges">
++<li><b>13. LSTM SCADA Anomaly (reference contract hub)</b> <span class="note">(m05-lstm-scada-anomaly)</span> &rarr; anomaly scores feed degradation states</li>
++<li>&rarr; <b>15. Particle Filter RUL</b> <span class="note">(m16-particle-filter-rul)</span> - state transitions seed the particle filter</li>
++</ul>
++<h2>Honest limits</h2><ul class="limits">
++<li>Standard HMM assumptions: Gaussian emissions, first-order Markov transitions</li>
++<li>Requires a health indicator that is already monotone in damage</li>
++</ul>
++<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
++<h2>Run it</h2>
++<pre>pip install -r requirements.txt
++python model.py
++
++# inside the unified platform
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external
++export WTPM_EXTERNAL_DIR=$PWD/external
++wt-pm inspect      # m15-hmm-degradation should report available
++wt-pm serve --port 8100</pre>
++<h2>All 25 pages</h2>
++<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
++<div class="grid fleet">
++<a class="" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
++<a class="here" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
++</div>
++<footer>
++<p>Model 10 of 25 &middot; adapter <code>m15-hmm-degradation</code> &middot; RUL Prognostics &middot; status integrated (severity-ordered states)</p>
++<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
++<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
++</footer>
++</div></body></html>
+diff --git a/index.html b/index.html
+index cbbcbac..0d99898 100644
+--- a/index.html
++++ b/index.html
+@@ -1,38 +1,168 @@
+ <!DOCTYPE html>
+-<html lang="en">
+-<head>
+-<meta charset="UTF-8">
+-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+-<title>hmm-degradation-states — RUL Prognostics</title>
++<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
++<html lang="en"><head><meta charset="utf-8">
++<meta name="viewport" content="width=device-width, initial-scale=1">
++<title>HMM Degradation States - WT-PM model 10 of 25</title>
++<meta name="description" content="A Gaussian hidden Markov model that infers the unobservable degradation stage behind a continuous health indicator, and emits a probability over discr">
+ <style>
+-  body{font-family:Inter,system-ui,Arial,sans-serif;margin:0;background:#0f172a;color:#e2e8f0}
+-  .hero{padding:48px 24px;max-width:900px;margin:auto}
+-  .badge{display:inline-block;background:#1e293b;color:#38bdf8;padding:6px 12px;border-radius:999px;font-size:12px;letter-spacing:.08em;text-transform:uppercase}
+-  h1{font-size:42px;margin:12px 0 8px}
+-  p{color:#94a3b8;line-height:1.6}
+-  .card{background:#1e293b;border:1px solid #334155;border-radius:16px;padding:20px;margin-top:24px}
+-  code{background:#0b1220;padding:2px 6px;border-radius:6px;color:#7dd3fc}
+-  a.btn{display:inline-block;margin-top:16px;background:#38bdf8;color:#0f172a;padding:12px 18px;border-radius:10px;text-decoration:none;font-weight:600}
+-  .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+-  @media(max-width:700px){.grid{grid-template-columns:1fr}}
+-</style>
+-</head>
+-<body>
+-  <div class="hero">
+-    <span class="badge">RUL Prognostics</span>
+-    <h1>wt-pm-hmm-degradation-states</h1>
+-    <p>Hidden Markov Model evaluating discrete unobservable degradation state transitions from continuous SCADA signals.</p>
+-    <div class="card">
+-      <strong>Quick start</strong><br>
+-      <code>pip install -r requirements.txt</code><br><br>
+-      <code>python model.py</code>
+-      <div class="grid">
+-        <div><strong>Dependencies</strong><br><code>hmmlearn numpy pandas</code></div>
+-        <div><strong>Files</strong><br>model.py, requirements.txt, .gitignore</div>
+-      </div>
+-      <a class="btn" href="#">View on GitHub Pages</a>
+-    </div>
+-    <p style="margin-top:24px;font-size:12px;color:#64748b">Local scaffold preview — this would be deployed to <code>gh-pages</code> branch as <code>index.html</code>.</p>
+-  </div>
+-</body>
+-</html>
+\ No newline at end of file
++:root{
++  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
++  --teal:#2ee6c8; --amber:#f0b429;
++}
++*{box-sizing:border-box}
++body{margin:0;background:var(--bg);color:var(--ink);
++  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
++a{color:var(--teal);text-decoration:none}
++a:hover{text-decoration:underline}
++.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
++header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
++.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
++.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
++.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
++.pill.adapter{color:var(--teal)}
++.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
++h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
++.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
++h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
++h3{font-size:16px;margin:22px 0 6px}
++p{color:#b7d0cc}
++table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
++th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
++th{color:var(--muted);font-weight:600;width:210px}
++td{color:#c9ddd9}
++code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
++pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
++.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
++.card h3{margin-top:0;color:var(--teal)}
++ul{color:#b7d0cc}
++li{margin:5px 0}
++.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
++.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
++.fleet a:hover{border-color:var(--teal);text-decoration:none}
++.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
++.fleet a span{color:var(--muted);font-size:11.5px}
++.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
++.edges li b{color:var(--ink)}
++.limits li{color:#e0b7b7}
++footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
++.note{color:var(--muted);font-size:13.5px}
++.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
++.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
++.btn.ghost{background:transparent;color:var(--ink)}
++</style></head><body><div class="wrap">
++<header><div class="crumbs">
++<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
++<span>collection of 25 models</span>
++<span class="pill num">MODEL 10 / 25</span>
++<span class="pill adapter">m15-hmm-degradation</span>
++<span class="pill status">integrated (severity-ordered states)</span>
++<span class="pill" style="color:#9d7bf5;border-color:#9d7bf555">RUL Prognostics</span>
++</div>
++<h1>HMM Degradation States</h1>
++<p class="lede">A Gaussian hidden Markov model that infers the unobservable degradation stage behind a continuous health indicator, and emits a probability over discrete states rather than a number. It answers HOW SEVERE in a form a maintenance planner can act on.</p>
++<div class="cta">
++<a class="btn" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">View on GitHub</a>
++<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
++<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
++</div>
++</header>
++<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
++<h2>Model</h2>
++<ul>
++<li><code>GaussianHMM configuration in model.py</code></li>
++<li><code>Platform adapter re-orders states by mean health indicator</code></li>
++</ul>
++<table>
++<tr><th>Hidden states</th><td>Discrete degradation stages with Gaussian emission per state</td></tr>
++<tr><th>Inference</th><td>Baum-Welch for parameters, forward-backward for the posterior state distribution given the whole history</td></tr>
++<tr><th>Ordering</th><td>States are permuted so that index == severity, which makes the label stable across refits and seeds</td></tr>
++</table>
++<h2>Advanced concepts</h2>
++<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
++<div class="card">
++<h3>Latent-state inference</h3>
++<p>A hidden state is not a cluster. The posterior is computed over the whole sequence with forward-backward, so yesterday's evidence changes today's state estimate - the smoothing a static classifier cannot do.</p>
++</div>
++<div class="card">
++<h3>Label switching</h3>
++<p>HMM state indices are arbitrary; refitting with a different seed can swap state 1 and state 3. Sorting states by mean health indicator is what turns a research object into a monotone severity scale the platform can report.</p>
++</div>
++<div class="card">
++<h3>States seed the filter</h3>
++<p>The state transition rate is a degradation rate, and m16 consumes it as the process model for a probabilistic RUL posterior. Discrete states plus a continuous filter is the collection's bridge from 'how bad' to 'how long'.</p>
++</div>
++<h2>Platform contract</h2>
++<table>
++<tr><th>Input (adapter view)</th><td>health-indicator series</td></tr>
++<tr><th>Output</th><td>degradation_state + probability(state)</td></tr>
++<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
++<tr><th>Typical latency</th><td>1500 ms</td></tr>
++<tr><th>Deployment targets</th><td>cloud</td></tr>
++<tr><th>Requirements</th><td>hmmlearn</td></tr>
++<tr><th>Fallback</th><td>none - leaf model</td></tr>
++<tr><th>Subsystem focus</th><td>whole turbine</td></tr>
++<tr><th>Hermes tool</th><td><code>rul / severity</code></td></tr>
++</table>
++<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
++<h2>Platform layers</h2>
++<table>
++<tr><th>Fusion</th><td>Supplies the degradation_state field that classification and RUL layers attach to</td></tr>
++<tr><th>Hermes</th><td>Where the agent's SEVERE answer comes from - a posterior over states, not a threshold</td></tr>
++<tr><th>RUL</th><td>State transitions seed the m16 particle filter</td></tr>
++<tr><th>Evaluation</th><td>Scored on state-posterior calibration and transition timing, not on point accuracy alone</td></tr>
++</table>
++<h2>How it connects to the other 24</h2>
++<ul class="edges">
++<li><b>13. LSTM SCADA Anomaly (reference contract hub)</b> <span class="note">(m05-lstm-scada-anomaly)</span> &rarr; anomaly scores feed degradation states</li>
++<li>&rarr; <b>15. Particle Filter RUL</b> <span class="note">(m16-particle-filter-rul)</span> - state transitions seed the particle filter</li>
++</ul>
++<h2>Honest limits</h2><ul class="limits">
++<li>Standard HMM assumptions: Gaussian emissions, first-order Markov transitions</li>
++<li>Requires a health indicator that is already monotone in damage</li>
++</ul>
++<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
++<h2>Run it</h2>
++<pre>pip install -r requirements.txt
++python model.py
++
++# inside the unified platform
++pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
++wt-pm fetch-models --dir ./external
++export WTPM_EXTERNAL_DIR=$PWD/external
++wt-pm inspect      # m15-hmm-degradation should report available
++wt-pm serve --port 8100</pre>
++<h2>All 25 pages</h2>
++<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
++<div class="grid fleet">
++<a class="" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
++<a class="here" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
++<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
++</div>
++<footer>
++<p>Model 10 of 25 &middot; adapter <code>m15-hmm-degradation</code> &middot; RUL Prognostics &middot; status integrated (severity-ordered states)</p>
++<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
++<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
++</footer>
++</div></body></html>
+-- 
+2.39.5
+

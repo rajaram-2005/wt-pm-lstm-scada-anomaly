@@ -31,8 +31,14 @@ wt-pm-lstm-scada-anomaly/
 │   └── docs/
 │       ├── INSPECTION.md    # audit of all 25 repos (before integration)
 │       ├── ARCHITECTURE_REPORT.md
-│       ├── MODELS.md        # adapter id, I/O, Hermes/XAI role
+│       ├── MODELS.md        # both numbering schemes, I/O, status, advanced layers
 │       └── sibling-readmes/ # earlier paste-ready READMEs (superseded by the catalog generator)
+├── deployment/
+│   ├── models.catalog.json  # single source of truth for all 25 model pages
+│   ├── build_model_pages.py # renders README + landing page for every model
+│   ├── check_ecosystem.py   # verifies all 25 pages merged and consistent
+│   ├── rollout_all.sh       # push-based rollout (needs write access)
+│   └── model-pages/         # 24 git-am-able patches + apply script
 ├── pyproject.toml           # project: wt-pm-lstm-scada-anomaly  →  wtpm
 └── platform/pyproject.toml  # project: wt-pm                     →  wt-pm
 ```
