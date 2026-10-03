@@ -1,50 +1,97 @@
-# All 25 WT-PM models — descriptions, I/O, platform role
+# All 25 WT-PM models — numbering, I/O, platform role, advanced concepts
 
-This session cannot push to the 24 sibling GitHub repositories (`gh` has
-**no write permission** on them). The descriptions below are the canonical
-copy for each model. Ready-to-paste README bodies live in
-`sibling-readmes/`. Apply on each repo’s `main` with:
+**Single source of truth:** [`deployment/models.catalog.json`](../../deployment/models.catalog.json)
+in the reference repository. It holds, for every one of the 25 models: collection
+number, adapter id, repository, status, architecture, contract, advanced-concept
+notes, platform-layer participation and honest limits — plus the 31 functional
+edges and the 8 advanced layers.
+
+**Generated pages:** `deployment/build_model_pages.py` renders `README.md`,
+`index.html` and `docs/index.html` for all 25 repositories from that catalog, and
+a copy of all 25 pages onto the static site
+([all-models.html](https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/all-models.html)).
+
+**Verification:** `deployment/check_ecosystem.py --dir <clones> --remote --strict`
+checks that each page states the right number/adapter/status, links all 25 pages,
+carries the advanced-concepts section, ships the same page on `gh-pages`, and that
+GitHub reports Pages as *built*.
+
+## Two numbering schemes, both printed on every page
+
+| Scheme | Range | Used by | This repository |
+|---|---|---|---|
+| Collection number | `01`…`25`, **alphabetical** by repository name | repository pages, PR titles, the wiring scripts | **13** |
+| Adapter id | `m01`…`m25`, **task-based** | `ModelRegistry`, the `wt-pm` CLI, adapters, fusion weights | `m05-lstm-scada-anomaly` |
+
+Earlier documents used the two interchangeably (for example "model 05" for this
+repository in this file, "model 13" in `ARCHITECTURE.md`). The catalog now records
+both fields per model, and every generated page prints both, so the mapping cannot
+drift again.
+
+## Rolling the pages out to the 24 sibling repositories
+
+The pages are generated here and pushed from here; siblings stay independently
+runnable and their `model.py` is never touched.
 
 ```bash
-# from a machine that has push access to rajaram-2005/wt-pm-*
-for f in platform/docs/sibling-readmes/*.md; do
-  repo=$(basename "$f" .md)
-  gh repo clone rajaram-2005/$repo /tmp/$repo
-  cp "$f" /tmp/$repo/README.md
-  (cd /tmp/$repo && git checkout -b docs/platform-description && git commit -am "docs: platform role, I/O contract, Hermes/XAI" && git push -u origin docs/platform-description && gh pr create --fill)
-done
+python deployment/build_model_pages.py --out build/pages      # render all 25
+bash deployment/rollout_all.sh --dry-run                      # what would happen
+bash deployment/rollout_all.sh                                # branch, PR, merge, gh-pages
+python deployment/check_ecosystem.py --dir /tmp/wtpm-clones --remote --strict
 ```
 
-Model 05 (`wt-pm-lstm-scada-anomaly`, this repo) already has a full README.
+`rollout_all.sh` clones each sibling into `build/rollout/`, applies the rendered
+README + landing page on a branch, opens a PR, merges it, rebuilds `gh-pages` as a
+clean single-file site and re-verifies. It needs a token with **write** access to
+`rajaram-2005/wt-pm-*`; a read-only token fails with HTTP 403 at the push step.
 
-| id | repository | adapter | task | description |
-|----|------------|---------|------|-------------|
-| m01 | wt-pm-1d-cnn-bearing-vibration | `m01-1dcnn-bearing` | fault classification | Keras 1D-CNN on vibration waveforms for gearbox bearing faults. Platform trains on **surrogate** waveforms derived from 10-min RMS (`vibration_is_surrogate=True`). |
-| m02 | wt-pm-convlstm-wear-prognostics | `m02-convlstm-wear` | RUL | ConvLSTM2D wear tracker. **Partial**: repo expects 64×64 wear maps that do not exist; adapter uses channel-recurrence images. |
-| m03 | wt-pm-tcn-power-curve | `m03-tcn-power-curve` | anomaly | TCN residual of aerodynamic power curve vs wind. |
-| m04 | wt-pm-gru-scada-telemetry | `m04-gru-scada-telemetry` | anomaly | GRU one-step SCADA forecaster; forecast error = anomaly score. |
-| m05 | wt-pm-lstm-scada-anomaly | `m05-lstm-scada-anomaly` | anomaly + contract hub | Reference LSTM/GRU autoencoder, 12-channel schema, simulator, drift, API. |
-| m06 | wt-pm-informer-long-sequence | `m06-informer-forecast` | forecasting / anomaly | Informer long-horizon power forecast. **Partial**: attention is a placeholder in upstream `model.py`. |
-| m07 | wt-pm-snn-event-vibration | `m07-snn-vibration` | fault classification | snnTorch SNN on event-encoded vibration (edge). |
-| m08 | wt-pm-contrastive-ssl-vibration | `m08-contrastive-ssl` | feature extraction | SimCLR-style encoder; **partial** NT-Xent. Embeddings feed tabular models. |
-| m09 | wt-pm-dbn-feature-extraction | `m09-dbn-features` | feature extraction | RBM/DBN stack; platform adds CD-1 pretraining the repo omits. |
-| m10 | wt-pm-random-forest-telemetry | `m10-random-forest` | fault classification | sklearn RF; feature importances feed XAI. |
-| m11 | wt-pm-xgboost-tabular-faults | `m11-xgboost-tabular` | fault classification | Primary tabular voter; SHAP TreeExplainer source (Hermes `explain` tool). |
-| m12 | wt-pm-svm-rbf-generator-stator | `m12-svm-generator` | fault classification | SVM-RBF on electrical channels (generator/converter specialist). |
-| m13 | wt-pm-deep-svdd-boundary | `m13-deep-svdd` | anomaly | One-class Deep SVDD hypersphere on healthy features. |
-| m14 | wt-pm-isolation-forest-telemetry | `m14-isolation-forest` | anomaly | Cheapest unsupervised stream; universal fallback. |
-| m15 | wt-pm-hmm-degradation-states | `m15-hmm-degradation` | degradation | GaussianHMM; states re-ordered by severity (HOW SEVERE). |
-| m16 | wt-pm-particle-filter-rul | `m16-particle-filter-rul` | RUL | Particle filter fusing m17/m02 into a probabilistic RUL posterior. |
-| m17 | wt-pm-mlp-rul-regression | `m17-mlp-rul` | RUL | sklearn MLP baseline every other RUL model must beat (proxy target). |
-| m18 | wt-pm-pg-bnn-wind-turbine | `m18-pg-bnn` | anomaly + uncertainty | Physics-guided BNN, P=τω loss, MC uncertainty. |
-| m19 | wt-pm-digital-twin-surrogate | `m19-digital-twin` | surrogate | FEA-surrogate MLP; Hermes `what_if` tool. |
-| m20 | wt-pm-gnn-turbines-cascade | `m20-gnn-cascade` | graph | GNN cascade risk on wake-coupled farm graph. |
-| m21 | wt-pm-xai-shap-interpretable | `m21-xai-shap` | explainability | SHAP wrapper; Hermes `explain` + contrastive + counterfactual. |
-| m22 | wt-pm-vae-reconstruction-loss | `m22-vae-reconstruction` | anomaly | VAE reconstruction-error stream. |
-| m23 | wt-pm-aerozip-autoencoder-compressor | `m23-aerozip` | compression | 8:1 telemetry compression; latent as features. |
-| m24 | wt-pm-quantized-mobilenet-edge | `m24-quantized-edge` | edge | INT8 TFLite recipe (full MobileNet out of scope — no image data). |
-| m25 | wt-pm-tinyml-esp32-safety-relay | `m25-tinyml-safety` | safety | Depth-5 tree → ESP32 `model.h`; Hermes `safety` tool. |
+## Models
 
-**Hermes tools** (Thought → Action → Observation): `sensor_quality`, `anomaly`, `diagnose`, `explain`, `rul`, `safety`, `what_if`, `finish`.
+| # | adapter | repository | task | status |
+|---|---------|------------|------|--------|
+| 01 | `m01-1dcnn-bearing` | wt-pm-1d-cnn-bearing-vibration | fault classification | integrated (surrogate waveforms) |
+| 02 | `m23-aerozip` | wt-pm-aerozip-autoencoder-compressor | compression | integrated |
+| 03 | `m08-contrastive-ssl` | wt-pm-contrastive-ssl-vibration | feature extraction | partial (platform supplies NT-Xent) |
+| 04 | `m02-convlstm-wear` | wt-pm-convlstm-wear-prognostics | RUL | partial (no 64×64 wear maps exist) |
+| 05 | `m09-dbn-features` | wt-pm-dbn-feature-extraction | feature extraction | integrated (CD-1 pretraining) |
+| 06 | `m13-deep-svdd` | wt-pm-deep-svdd-boundary | anomaly | integrated (6-layer bias-free encoder) |
+| 07 | `m19-digital-twin` | wt-pm-digital-twin-surrogate | surrogate | integrated (physics-proxy targets) |
+| 08 | `m20-gnn-cascade` | wt-pm-gnn-turbines-cascade | graph | integrated (wake graph from simulator) |
+| 09 | `m04-gru-scada-telemetry` | wt-pm-gru-scada-telemetry | anomaly | integrated |
+| 10 | `m15-hmm-degradation` | wt-pm-hmm-degradation-states | degradation | integrated (severity-ordered states) |
+| 11 | `m06-informer-forecast` | wt-pm-informer-long-sequence | forecasting / anomaly | partial (placeholder attention) |
+| 12 | `m14-isolation-forest` | wt-pm-isolation-forest-telemetry | anomaly | integrated (universal fallback) |
+| 13 | `m05-lstm-scada-anomaly` | **wt-pm-lstm-scada-anomaly** (this repo) | anomaly + contract hub | integrated — reference implementation |
+| 14 | `m17-mlp-rul` | wt-pm-mlp-rul-regression | RUL | integrated (proxy target) |
+| 15 | `m16-particle-filter-rul` | wt-pm-particle-filter-rul | RUL | complete |
+| 16 | `m18-pg-bnn` | wt-pm-pg-bnn-wind-turbine | anomaly + uncertainty | integrated (P = τω loss) |
+| 17 | `m24-quantized-edge` | wt-pm-quantized-mobilenet-edge | edge | integrated (recipe on platform edge net) |
+| 18 | `m10-random-forest` | wt-pm-random-forest-telemetry | fault classification | integrated |
+| 19 | `m07-snn-vibration` | wt-pm-snn-event-vibration | fault classification | integrated (surrogate events) |
+| 20 | `m12-svm-generator` | wt-pm-svm-rbf-generator-stator | fault classification | integrated (electrical specialist) |
+| 21 | `m03-tcn-power-curve` | wt-pm-tcn-power-curve | anomaly | integrated |
+| 22 | `m25-tinyml-safety` | wt-pm-tinyml-esp32-safety-relay | safety | integrated |
+| 23 | `m22-vae-reconstruction` | wt-pm-vae-reconstruction-loss | anomaly | integrated (repo's `vae_loss`) |
+| 24 | `m21-xai-shap` | wt-pm-xai-shap-interpretable | explainability | integrated |
+| 25 | `m11-xgboost-tabular` | wt-pm-xgboost-tabular-faults | fault classification | integrated (primary tabular voter) |
 
-**XAI stack:** m21 SHAP + healthy-band contrastive z + feature counterfactual + Hermes narrative (observations never invented).
+## Advanced layers
+
+Defined once in the catalog, cited by every model page that participates:
+
+| Layer | What it does | Models |
+|---|---|---|
+| Fusion engine | Weighted / confidence-weighted / max / median, inverse-variance weighting under uncertainty, coverage-aware probability fusion | 3, 4, 6, 9, 10, 11, 12, 13, 16, 18, 20, 21, 22, 23, 25 |
+| Calibrated uncertainty | Intervals and confidences on every alert; expected calibration error at evaluation time | 13, 15, 16, 23 |
+| Drift & data trust | Training-vs-live distribution comparison; freeze / spike / stuck-at / range sensor flags | 2, 3, 5, 6, 13 |
+| Explainability | SHAP TreeExplainer, contrastive healthy-band z, counterfactuals, Hermes narrative | 1, 18, 24, 25 |
+| Physics constraints | Digital-twin residuals and what-if; P = τω soft constraint with physics-consistent uncertainty | 7, 16 |
+| Safety gate | Depth-5 tree → `model.h` on ESP32 plus a mirrored in-loop gate; excluded from fusion | 22 |
+| Evaluation protocol | Leak-free window masks, ROC-AUC / PR-AUC / calibration / RUL metrics, fidelity ladder | 1, 3, 5, 13, 15 |
+| Hermes agent | Thought → Action → Observation over `sensor_quality, anomaly, diagnose, explain, rul, safety, what_if, finish` | 7, 9, 13, 15, 16, 22, 24, 25 |
+
+**Hermes tools** (Thought → Action → Observation): `sensor_quality`, `anomaly`,
+`diagnose`, `explain`, `rul`, `safety`, `what_if`, `finish`.
+
+**XAI stack:** m21 SHAP + healthy-band contrastive z + feature counterfactual +
+Hermes narrative (observations never invented).

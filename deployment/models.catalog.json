@@ -1,0 +1,2860 @@
+{
+  "schema": "wt-pm.model-catalog.v1",
+  "collection": "wt-pm",
+  "reference_repo": "wt-pm-lstm-scada-anomaly",
+  "site": "https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/",
+  "numbering": {
+    "collection": "Alphabetical position across the 25 wt-pm repositories (01-25). This is the number printed on each repository's page and used in the repository names you already know.",
+    "adapter": "Task-based platform adapter id (m01-m25). This is the id the ModelRegistry, the wt-pm CLI and the fusion engine use."
+  },
+  "categories": {
+    "edgeai": {
+      "name": "Edge AI",
+      "color": "#f2a154",
+      "note": "Models that run at or near the turbine: compressing telemetry for backhaul, extracting features on low-power hardware, and tripping safety relays without waiting for the cloud."
+    },
+    "anomaly": {
+      "name": "SCADA Anomaly Detection",
+      "color": "#4cc9f0",
+      "note": "Seven detectors over the shared 12-channel, 10-minute SCADA contract. Different inductive biases - sequences, reconstruction, boundaries, forests, attention - one output record, so downstream layers never care which one fired."
+    },
+    "fault": {
+      "name": "Component Fault Classification",
+      "color": "#f25c78",
+      "note": "Turning 'something is wrong' into 'this component, this failure mode'. Consumes anomaly records and edge features; produces the labels that prognostics and XAI operate on."
+    },
+    "rul": {
+      "name": "RUL Prognostics",
+      "color": "#9d7bf5",
+      "note": "Remaining-useful-life estimation: discrete degradation states, spatiotemporal wear tracking, learned feature hierarchies, probabilistic filtering - anchored by a deliberately simple MLP baseline."
+    },
+    "physics": {
+      "name": "Physics-Informed & Explainable",
+      "color": "#52d68a",
+      "note": "The layer that keeps the learning honest: physics surrogates supply residuals and constraints, and SHAP/LIME turn alerts into root-cause explanations."
+    }
+  },
+  "models": [
+    {
+      "number": 1,
+      "adapter": "m01-1dcnn-bearing",
+      "repo": "wt-pm-1d-cnn-bearing-vibration",
+      "title": "1D-CNN Bearing Vibration",
+      "short": "1D-CNN Bearing",
+      "category": "fault",
+      "task": "fault_classification",
+      "status": "integrated (surrogate waveforms)",
+      "status_kind": "integrated",
+      "summary": "A three-block 1D convolutional network that classifies gearbox bearing condition directly from a raw vibration window, with no hand-built spectral features. It is the highest-resolution view of the drivetrain in the collection: the only model that would consume a real high-frequency DAQ stream unchanged if one were wired to the simulator.",
+      "entry_points": [
+        "build_1d_cnn(input_shape, num_classes) - compiled Keras Sequential",
+        "python model.py - prints the layer summary"
+      ],
+      "architecture": [
+        {
+          "block": "Feature extractor",
+          "detail": "3 x (Conv1D kernel 3 + ReLU -> MaxPooling1D 2), 32 -> 64 -> 128 filters; learns its own band-pass banks instead of an FFT"
+        },
+        {
+          "block": "Classifier head",
+          "detail": "Flatten -> Dense(128) + ReLU -> Dropout(0.5) -> Dense(num_classes) + softmax"
+        },
+        {
+          "block": "Compile",
+          "detail": "Adam, categorical_crossentropy; 2,096,068 parameters for (1024, 1) input and 4 classes"
+        }
+      ],
+      "io": {
+        "input": "1024-sample vibration waveform windows - surrogates synthesised from bearing_vib_rms_mm_s and flagged vibration_is_surrogate=True",
+        "output": "prediction + probability over healthy / bearing_wear / imbalance / other",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "tensorflow"
+        ],
+        "latency_ms": 6000,
+        "deployment": [
+          "cloud",
+          "edge_gpu"
+        ],
+        "fallback": "m11-xgboost-tabular",
+        "subsystem": "drivetrain"
+      },
+      "advanced": [
+        {
+          "concept": "Receptive field arithmetic",
+          "detail": "Three kernel-3 convolutions separated by max-pool 2 give a receptive field of 1 + 2 + 4 + ... samples of context per output activation. Widening the kernel or adding a dilation is the only way to see a full shaft revolution without a deeper stack - the reason the upstream model stops at 1024 samples."
+        },
+        {
+          "concept": "Convolution beats handcrafted spectra",
+          "detail": "Classical bearing diagnostics hand you envelope spectra and defect frequencies (BPFO/BPFI). A 1D-CNN learns its own filter bank end to end, which is why it transfers across machines - and why it needs thousands of labelled windows to beat the handcrafted baseline at all."
+        },
+        {
+          "concept": "Surrogate-data honesty",
+          "detail": "The platform has 10-minute RMS SCADA, not 20 kHz DAQ. Waveforms are synthesised and carry vibration_is_surrogate=True, so every metric this model reports is a property of the pipeline, not of a real bearing. Swapping in a real DAQ path changes only the adapter's input view, never the network."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Drivetrain fault voter in the classification fusion - a softmax vote, not a score threshold"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "Feeds the diagnose tool: turns an anomaly into a named failure mode and a subsystem (WHERE)"
+        },
+        {
+          "layer": "XAI",
+          "detail": "Its alert is explained by m21 SHAP over the tabular features plus a contrastive healthy-band comparison"
+        },
+        {
+          "layer": "Protocol",
+          "detail": "Trains only on windows fully inside train_mask - no window is allowed to straddle a held-out row"
+        }
+      ],
+      "hermes": "diagnose",
+      "limits": [
+        "Surrogate waveforms, not field DAQ - vibration_is_surrogate=True on every record",
+        "Metrics are held-out simulator records (fidelity rung 1), not certified asset performance"
+      ],
+      "concepts": [
+        "Receptive fields",
+        "Surrogate data",
+        "Transfer learning",
+        "Softmax calibration"
+      ]
+    },
+    {
+      "number": 2,
+      "adapter": "m23-aerozip",
+      "repo": "wt-pm-aerozip-autoencoder-compressor",
+      "title": "AeroZip Autoencoder Compressor",
+      "short": "AeroZip Compressor",
+      "category": "edgeai",
+      "task": "compression",
+      "status": "integrated",
+      "status_kind": "integrated",
+      "summary": "An 8:1 bottleneck autoencoder that squeezes a 64-column telemetry table into an 8-dimensional latent vector for low-bandwidth cellular or satellite backhaul. The same latent doubles as a feature stream for the rest of the collection, so compression is not a separate pipeline stage - it is the first one.",
+      "entry_points": [
+        "AeroZipCompressor(input_dim=64, latent_dim=8) - nn.Module returning (latent, reconstructed)",
+        "compression_ratio(input_dim=64, latent_dim=8) - returns input_dim / latent_dim"
+      ],
+      "architecture": [
+        {
+          "block": "encoder",
+          "detail": "Linear(input_dim, 32) -> ReLU -> Linear(32, latent_dim)"
+        },
+        {
+          "block": "decoder",
+          "detail": "Linear(latent_dim, 32) -> ReLU -> Linear(32, input_dim)"
+        },
+        {
+          "block": "forward",
+          "detail": "Returns both tensors: the latent is the product, the reconstruction is the loss signal"
+        },
+        {
+          "block": "Size",
+          "detail": "4,744 parameters at 64 -> 8; 2,794 when the platform instantiates it on its 38-column feature table with latent_dim=4"
+        }
+      ],
+      "io": {
+        "input": "tabular feature tensors (batch_size, input_dim), float32",
+        "output": "extracted_features (latent) + reconstruction_error",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 1200,
+        "deployment": [
+          "cloud",
+          "edge_cpu",
+          "edge_gpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Rate-distortion, not just dimension",
+          "detail": "8:1 is a count of dimensions, not of bytes actually sent. A defensible bandwidth claim needs entropy-coded latent bitrates measured on real backhaul traces - the model reports compression_ratio() and nothing more."
+        },
+        {
+          "concept": "Reconstruction error as a free detector",
+          "detail": "An autoencoder trained on healthy telemetry misfits when the plant changes. The same forward pass therefore yields two products: a latent for backhaul and a scalar residual that behaves like an unsupervised anomaly score."
+        },
+        {
+          "concept": "Latent as transferable features",
+          "detail": "The bottleneck is reused as the input view for the tabular voters (m10, m11) and the SSL encoder, so a cheap linear layer at the edge can produce features the cloud classifiers already understand."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Supplies features rather than votes; the feature_extraction stage feeds m08 / m09 / m10 / m11"
+        },
+        {
+          "layer": "Edge",
+          "detail": "Deploys to edge CPU and GPU; it is the only compressor in the collection, so it is the assumed front end for constrained links"
+        },
+        {
+          "layer": "Drift",
+          "detail": "Rising reconstruction error on live data is the earliest drift signal in the pipeline - evaluated by evaluation.drift_report"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "Its latent feeds the anomaly and diagnose tools indirectly through the downstream voters"
+        }
+      ],
+      "hermes": "feature source for anomaly / diagnose",
+      "limits": [
+        "Backhaul byte savings are not measured - only the dimensional ratio is",
+        "Latent quality is validated on simulator statistics, not on a real link budget"
+      ],
+      "concepts": [
+        "Bottleneck autoencoders",
+        "Rate-distortion",
+        "Latent features",
+        "Reconstruction error"
+      ]
+    },
+    {
+      "number": 3,
+      "adapter": "m08-contrastive-ssl",
+      "repo": "wt-pm-contrastive-ssl-vibration",
+      "title": "Contrastive SSL Vibration",
+      "short": "Contrastive SSL",
+      "category": "fault",
+      "task": "feature_extraction",
+      "status": "partial (SimCLR encoder; platform adapter supplies full NT-Xent loss)",
+      "status_kind": "partial",
+      "summary": "A SimCLR-style encoder that learns vibration representations without any labels by pulling two augmented views of the same window together and pushing every other window apart. In a plant where failures are rare and unlabelled data is abundant, this is the model that manufactures the labels nobody has.",
+      "entry_points": [
+        "Encoder + projection head from model.py",
+        "Platform adapter supplies the complete NT-Xent loss the repository omits"
+      ],
+      "architecture": [
+        {
+          "block": "Encoder",
+          "detail": "Shared-weight convolutional / MLP trunk producing one embedding per view"
+        },
+        {
+          "block": "Projection head",
+          "detail": "Small MLP mapping embeddings onto the unit sphere where the contrastive loss is computed"
+        },
+        {
+          "block": "Loss",
+          "detail": "NT-Xent over 2N augmented views with a temperature parameter; upstream ships a partial implementation, completed by the adapter"
+        }
+      ],
+      "io": {
+        "input": "unlabelled vibration windows (two augmented views per sample)",
+        "output": "extracted_features (embeddings)",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 4000,
+        "deployment": [
+          "cloud",
+          "edge_gpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "NT-Xent and temperature",
+          "detail": "The loss is a softmax over cosine similarities scaled by 1/temperature. Temperature controls how hard the model punishes near-miss negatives - too low and training collapses, too high and the representation stops discriminating."
+        },
+        {
+          "concept": "Augmentation defines the invariant",
+          "detail": "You are not learning 'normal vibration'; you are learning whatever the augmentation pipeline refuses to change - jitter, amplitude scaling, time shifts. Choose augmentations that are physically irrelevant and the embedding becomes a fault fingerprint."
+        },
+        {
+          "concept": "What 'partial' buys you",
+          "detail": "The upstream repository defines the encoder but not the full loss. The platform adapter implements it, which is why this model is marked partial rather than complete: the numbers describe the platform's training loop, not the upstream repo's."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Feature extractor: no vote of its own, improves everyone else's features"
+        },
+        {
+          "layer": "Protocol",
+          "detail": "Pretraining uses unlabelled windows only; the linear probe is evaluated on held-out rows so no label leaks backwards"
+        },
+        {
+          "layer": "XAI",
+          "detail": "Embeddings power the contrastive healthy-band z-score used by the XAI bundle"
+        },
+        {
+          "layer": "Drift",
+          "detail": "Embedding-space drift is the most sensitive early warning the platform has, because it needs no labels"
+        }
+      ],
+      "hermes": "no direct tool - improves anomaly / diagnose evidence",
+      "limits": [
+        "Upstream loss incomplete; performance is attributable to the platform's completed NT-Xent",
+        "No downstream fine-tuning is shipped for every classifier - some consume features as-is"
+      ],
+      "concepts": [
+        "Self-supervised learning",
+        "NT-Xent",
+        "Contrastive embeddings",
+        "Linear probing"
+      ]
+    },
+    {
+      "number": 4,
+      "adapter": "m02-convlstm-wear",
+      "repo": "wt-pm-convlstm-wear-prognostics",
+      "title": "ConvLSTM Wear Prognostics",
+      "short": "ConvLSTM Wear",
+      "category": "rul",
+      "task": "rul_estimation",
+      "status": "partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)",
+      "status_kind": "partial",
+      "summary": "A ConvLSTM2D stack that carries a two-dimensional wear field forward in time, keeping spatial structure that a plain LSTM would flatten away. It is the collection's spatiotemporal degradation tracker - and its bluntest example of how a research assumption meets a data reality.",
+      "entry_points": [
+        "ConvLSTM2D model definition in model.py",
+        "Platform adapter builds recurrence images from the 12-channel window"
+      ],
+      "architecture": [
+        {
+          "block": "Input",
+          "detail": "Upstream expects (10, 64, 64, 1) wear maps - a sequence of ten 64x64 frames"
+        },
+        {
+          "block": "Recurrent convolution",
+          "detail": "ConvLSTM2D cells replace the dense gates of an LSTM with convolutions, so hidden state keeps a spatial extent"
+        },
+        {
+          "block": "Head",
+          "detail": "Regression onto remaining useful life"
+        }
+      ],
+      "io": {
+        "input": "windows -> 16x16 channel-recurrence images (the platform's substitute for unavailable wear maps)",
+        "output": "rul_hours",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "tensorflow"
+        ],
+        "latency_ms": 15000,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": "m17-mlp-rul",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Convolutional gates",
+          "detail": "Every gate in a ConvLSTM is itself a convolution, so the cell learns where to remember as well as when. That is what makes it suitable for a degradation field, and what makes it 10-100x more expensive than a dense recurrent layer."
+        },
+        {
+          "concept": "The missing 64x64 tensor",
+          "detail": "No data source in the collection produces wear maps. Rather than silently fabricating them, the adapter builds 16x16 channel-recurrence images and the model is marked partial. The honest statement is: the recurrence works, the upstream spatial claim is untested."
+        },
+        {
+          "concept": "RUL uncertainty is not optional",
+          "detail": "A point estimate of remaining life is almost useless for planning without an interval. This adapter returns rul_hours only; the probabilistic statement comes from m16, which fuses these observations into a posterior."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "One of the RUL observations consumed by the m16 particle filter"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Scored with rul_metrics (MAE / RMSE / asymmetric penalty), not with classification metrics"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "Feeds the rul tool alongside m15 states and m17 baseline"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m17-mlp-rul when TensorFlow is unavailable - the platform never fails a question because a heavy model is missing"
+        }
+      ],
+      "hermes": "rul",
+      "limits": [
+        "Partial: upstream 64x64 wear-map contract is not satisfiable with available data",
+        "15 s typical latency - cloud only, never in the safety path"
+      ],
+      "concepts": [
+        "ConvLSTM",
+        "Spatiotemporal fields",
+        "RUL uncertainty",
+        "Graceful degradation"
+      ]
+    },
+    {
+      "number": 5,
+      "adapter": "m09-dbn-features",
+      "repo": "wt-pm-dbn-feature-extraction",
+      "title": "DBN Feature Extraction",
+      "short": "DBN Features",
+      "category": "rul",
+      "task": "feature_extraction",
+      "status": "integrated (platform supplies its own CD-1 loop; the repo ships one too)",
+      "status_kind": "integrated",
+      "summary": "A stack of Restricted Boltzmann Machines trained greedily layer by layer, then read out as a feature hierarchy for wear tracking. It is the classic pre-deep-learning answer to 'we do not have enough labels', and it still earns its place because its features are interpretable as successive energy minima.",
+      "entry_points": [
+        "RBM / DBN classes in model.py",
+        "Contrastive-divergence (CD-1) training loop - present in the repo and re-implemented by the adapter"
+      ],
+      "architecture": [
+        {
+          "block": "RBM",
+          "detail": "Visible-hidden bipartite energy model; each unit is a Bernoulli or Gaussian variable"
+        },
+        {
+          "block": "Greedy pretraining",
+          "detail": "CD-1 Gibbs sampling per layer - one negative-phase step is enough for a usable gradient estimate"
+        },
+        {
+          "block": "Readout",
+          "detail": "Upper-layer activations become features for the RUL regressors"
+        }
+      ],
+      "io": {
+        "input": "feature vectors (no labels required for pretraining)",
+        "output": "extracted_features (hierarchical activations)",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 3000,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Energy-based models",
+          "detail": "An RBM defines an energy for every visible-hidden configuration; learning lowers the energy of data and raises it elsewhere. The gradient needs the model's own expectation, which is intractable - that is the whole reason for contrastive divergence."
+        },
+        {
+          "concept": "Why one Gibbs step is enough",
+          "detail": "CD-1 is biased but cheap: it does not follow the true gradient, yet it reliably moves parameters in a useful direction. The bias is why DBNs were displaced by backpropagation-based autoencoders, and why the repo's CD-1 loop matters for reproducing the numbers."
+        },
+        {
+          "concept": "Layerwise features as a ladder",
+          "detail": "Each layer's activations are a legitimate feature set, so you can stop early for a cheaper model. The platform treats the DBN as a feature provider, which is how it can serve an RUL regressor without retraining anything downstream."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Feature extractor feeding the m17 RUL regressor and the tabular voters"
+        },
+        {
+          "layer": "Protocol",
+          "detail": "Pretraining masks exclude held-out rows entirely, so unsupervised structure cannot leak test labels"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Judged by downstream RUL error, not by reconstruction loss - a lower CD-1 objective is not automatically a better feature"
+        },
+        {
+          "layer": "XAI",
+          "detail": "Layer activations are inspectable, which makes the DBN the most auditable feature extractor in the collection"
+        }
+      ],
+      "hermes": "feature source for rul / diagnose",
+      "limits": [
+        "No GPU path; 3 s latency keeps it on the server",
+        "CD-1 bias is accepted, not corrected - numbers are reproducible, not optimal"
+      ],
+      "concepts": [
+        "Energy-based models",
+        "Contrastive divergence",
+        "Greedy layerwise pretraining",
+        "Feature hierarchies"
+      ]
+    },
+    {
+      "number": 6,
+      "adapter": "m13-deep-svdd",
+      "repo": "wt-pm-deep-svdd-boundary",
+      "title": "Deep SVDD Boundary",
+      "short": "Deep SVDD",
+      "category": "anomaly",
+      "task": "anomaly_detection",
+      "status": "integrated (6-layer bias-free encoder; platform supplies its own training loop)",
+      "status_kind": "integrated",
+      "summary": "A neural network trained to map healthy telemetry into a tight hypersphere, so that abnormality is literally distance from the centre. Unlike reconstruction models it never learns what a fault looks like - it only learns the shape of normal, which is exactly the assumption a wind farm can support.",
+      "entry_points": [
+        "DeepSVDDNetwork(input_dim, rep_dim)",
+        "init_center(net, data)",
+        "svdd_loss(net, x, center)"
+      ],
+      "architecture": [
+        {
+          "block": "Encoder",
+          "detail": "6 layers, no bias terms - a deliberate constraint that stops the network from shrinking the sphere by shifting it"
+        },
+        {
+          "block": "Centre",
+          "detail": "init_center() fixes c as the mean of the encoder outputs on healthy data, then freezes it"
+        },
+        {
+          "block": "Objective",
+          "detail": "svdd_loss minimises squared distance to c plus L2 weight decay; the weight decay is what prevents hypersphere collapse"
+        },
+        {
+          "block": "Score",
+          "detail": "Robust-calibrated distance to the centre becomes anomaly_score"
+        }
+      ],
+      "io": {
+        "input": "tabular features (batch.features)",
+        "output": "anomaly_score - robust-calibrated distance to the hypersphere centre",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 1500,
+        "deployment": [
+          "cloud",
+          "edge_gpu",
+          "edge_cpu"
+        ],
+        "fallback": "m14-isolation-forest",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Hypersphere collapse",
+          "detail": "If you let a network map everything to one point, the loss goes to zero and the model dies. The classical fixes are the bias-free encoder plus weight decay - both are present here, and both are the reason this is a usable detector rather than a degenerate one."
+        },
+        {
+          "concept": "One-class training",
+          "detail": "Deep SVDD trains on healthy data only. That is its strength (no fault labels needed) and its blind spot: it cannot distinguish a new normal operating regime from a fault unless the encoders around it disagree."
+        },
+        {
+          "concept": "Centre matters more than weights",
+          "detail": "init_center() from a healthy sample biases the whole solution. Averaging over a representative healthy window - and refusing to move c afterwards - is what makes the anomaly score comparable across turbines."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "One of seven anomaly voters; its score is combined by the confidence-weighted fusion rule"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool - contributes a boundary verdict rather than a forecasting one"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m14-isolation-forest when torch is absent"
+        },
+        {
+          "layer": "Drift",
+          "detail": "A slow drift of the encoder's mean distance is a hygiene signal that the healthy reference has gone stale"
+        }
+      ],
+      "hermes": "anomaly",
+      "limits": [
+        "Requires a trustworthy healthy window to fix the centre",
+        "Distance is not a probability - calibration is done by robust scaling, not by likelihood"
+      ],
+      "concepts": [
+        "One-class learning",
+        "Hypersphere collapse",
+        "Representation learning",
+        "Robust calibration"
+      ]
+    },
+    {
+      "number": 7,
+      "adapter": "m19-digital-twin",
+      "repo": "wt-pm-digital-twin-surrogate",
+      "title": "Digital Twin Surrogate",
+      "short": "Digital Twin",
+      "category": "physics",
+      "task": "surrogate",
+      "status": "integrated (physics-proxy targets)",
+      "status_kind": "integrated",
+      "summary": "A neural surrogate that stands in for a finite-element model, returning stress, deflection and fatigue proxies in about a millisecond instead of hours. Its real product is the residual: what the physics says should be happening versus what the SCADA actually reports.",
+      "entry_points": [
+        "Surrogate MLP in model.py (inverse/FEA surrogate)",
+        "Platform adapter trains it against simulator physics proxies"
+      ],
+      "architecture": [
+        {
+          "block": "Input",
+          "detail": "Operating-condition channels - wind speed, rotor speed, pitch, power"
+        },
+        {
+          "block": "Surrogate body",
+          "detail": "Feed-forward MLP replacing the FEA solve"
+        },
+        {
+          "block": "Targets",
+          "detail": "Thrust ~ rho * v^2, bending and fatigue proxies derived from the simulator's own physics"
+        }
+      ],
+      "io": {
+        "input": "operating-condition channels",
+        "output": "prediction - stress / deflection / fatigue proxies",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 1000,
+        "deployment": [
+          "cloud",
+          "edge_gpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Why a surrogate at all",
+          "detail": "FEA of a blade or tower is accurate and unusable online. A surrogate trained offline reproduces the input-output map in milliseconds, which is what makes physics available inside a 10-minute SCADA loop."
+        },
+        {
+          "concept": "Residuals as a detector",
+          "detail": "The model never claims to find faults. It predicts what physics implies, and the mismatch between prediction and measurement is handed to the anomaly voters - physics constrains the learning rather than replacing it."
+        },
+        {
+          "concept": "Extrapolation is the failure mode",
+          "detail": "A surrogate is only valid inside its training envelope. Outside rated wind or in a new control strategy its residuals grow for reasons that have nothing to do with damage, which is why residuals are clustered with, never substituted for, the statistical detectors."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Hermes",
+          "detail": "what_if tool - the only model that answers 'what if we pitch two degrees differently'"
+        },
+        {
+          "layer": "Fusion",
+          "detail": "Physics residuals feed the anomaly ensemble as an extra evidence stream (support task, no vote weight of its own)"
+        },
+        {
+          "layer": "XAI",
+          "detail": "Gives the explanation layer a physical counterfactual to compare against the statistical one"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Scored on regression error against the physics proxy targets, not on fault detection"
+        }
+      ],
+      "hermes": "what_if",
+      "limits": [
+        "Targets are simulator physics proxies, not measured loads",
+        "No valid extrapolation outside the training envelope"
+      ],
+      "concepts": [
+        "Surrogate modelling",
+        "Physics residuals",
+        "Counterfactuals",
+        "Operating envelopes"
+      ]
+    },
+    {
+      "number": 8,
+      "adapter": "m20-gnn-cascade",
+      "repo": "wt-pm-gnn-turbines-cascade",
+      "title": "GNN Turbine Cascade",
+      "short": "GNN Cascade",
+      "category": "fault",
+      "task": "graph_analysis",
+      "status": "integrated (wake graph from simulator)",
+      "status_kind": "integrated",
+      "summary": "A graph neural network that lifts per-turbine evidence onto a wake-coupled farm graph, so a fault upstream can raise the risk estimate downstream. It is the only model in the collection whose unit of analysis is the fleet rather than the machine.",
+      "entry_points": [
+        "GNN model in model.py",
+        "Fallback linear network when torch-geometric is absent"
+      ],
+      "architecture": [
+        {
+          "block": "Graph",
+          "detail": "Nodes are turbines; edges encode wake coupling supplied in meta['fleet']"
+        },
+        {
+          "block": "Message passing",
+          "detail": "Each node aggregates neighbour states, so evidence propagates along the wake direction"
+        },
+        {
+          "block": "Head",
+          "detail": "Per-node cascade risk class"
+        }
+      ],
+      "io": {
+        "input": "fleet batches + wake graph (meta['fleet'])",
+        "output": "prediction - cascade risk class per turbine",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch",
+          "torch-geometric (optional: the repo ships a fallback)"
+        ],
+        "latency_ms": 2000,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Message passing",
+          "detail": "Each layer replaces a node's features with a learned aggregation of its neighbours'. Stacking k layers gives every turbine a receptive field of k wake hops, which is how a local fault becomes a farm-level statement."
+        },
+        {
+          "concept": "Synthetic supervision",
+          "detail": "Upstream training uses self-loop synthetic vibration-risk labels. The fixed weights are applied to the supplied fleet graph, so this model demonstrates the mechanism rather than a validated wake-physics result."
+        },
+        {
+          "concept": "Fleet-level precision",
+          "detail": "Downstream, cascade risk conditions RUL updates in m16 - a turbine behind a poorly performing neighbour gets a wider uncertainty interval even when its own signals look clean."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Fleet-risk context attached to the diagnosis, not blended into the per-turbine score"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "Context for diagnose and rul - explains why a clean-looking turbine still carries risk"
+        },
+        {
+          "layer": "RUL",
+          "detail": "Cascade risk conditions the m16 particle filter's observation noise"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Graph-native metrics; per-node accuracy alone would hide propagation errors"
+        }
+      ],
+      "hermes": "diagnose / rul context",
+      "limits": [
+        "Trained against self-loop synthetic supervision, not validated wake physics",
+        "Wake graph comes from the simulator's layout, not from a met-mast campaign"
+      ],
+      "concepts": [
+        "Graph neural networks",
+        "Message passing",
+        "Wake coupling",
+        "Fleet-level risk"
+      ]
+    },
+    {
+      "number": 9,
+      "adapter": "m04-gru-scada-telemetry",
+      "repo": "wt-pm-gru-scada-telemetry",
+      "title": "GRU SCADA Telemetry",
+      "short": "GRU SCADA",
+      "category": "anomaly",
+      "task": "anomaly_detection",
+      "status": "integrated",
+      "status_kind": "integrated",
+      "summary": "A one-step-ahead GRU forecaster over the 12 SCADA channels whose prediction error is the anomaly score. It is the cheapest sequence detector in the collection and the one that runs on an edge CPU, which makes it the default continuous monitor.",
+      "entry_points": [
+        "GRUAnomalyDetector(input_size, hidden_size, num_layers)",
+        "python model.py - defines the class; loads no data and trains nothing"
+      ],
+      "architecture": [
+        {
+          "block": "Sequence model",
+          "detail": "nn.GRU(input_size, hidden_size, num_layers, batch_first=True)"
+        },
+        {
+          "block": "Head",
+          "detail": "nn.Linear(hidden_size, input_size) - predicts the next step of every channel from the final hidden state"
+        },
+        {
+          "block": "Score",
+          "detail": "Standardised one-step forecast error; no reconstruction decoder is needed"
+        }
+      ],
+      "io": {
+        "input": "sequence windows over the canonical 12 SCADA channels",
+        "output": "anomaly_score - standardised one-step forecast error",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 2000,
+        "deployment": [
+          "cloud",
+          "edge_gpu",
+          "edge_cpu"
+        ],
+        "fallback": "m14-isolation-forest",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Update and reset gates",
+          "detail": "The GRU's reset gate decides how much past state to forget and the update gate how much new candidate state to admit. Two gates instead of the LSTM's three is why this model fits an edge CPU's latency budget at 2 s per window."
+        },
+        {
+          "concept": "One-step versus multi-step",
+          "detail": "A one-step forecast error is a residual, not a horizon forecast: it says 'this moment did not follow from the last few', which is the right question for detection and the wrong one for planning. Horizon forecasting is m06's job."
+        },
+        {
+          "concept": "Standardising the residual",
+          "detail": "Raw squared error scales with the channel's own range, so a gusty day looks like a fault. The adapter standardises error before it becomes a score - the reason the fusion layer can compare this vote with SVDD and VAE distances at all."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Anomaly voter; confidence-weighted fusion down-weights it when the wrapped uncertainty is high"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool - the GRU's residual is one of the votes the agent observes"
+        },
+        {
+          "layer": "Edge",
+          "detail": "Runs on edge CPU, so it is the detector that survives when the backhaul drops"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m14-isolation-forest when torch is unavailable"
+        }
+      ],
+      "hermes": "anomaly",
+      "limits": [
+        "Architecture only upstream - the platform supplies the training loop (short fits on simulator windows)",
+        "Metrics are held-out simulator records (fidelity rung 1), not certified asset performance"
+      ],
+      "concepts": [
+        "Gated recurrence",
+        "Forecast residuals",
+        "Edge inference",
+        "Score standardisation"
+      ]
+    },
+    {
+      "number": 10,
+      "adapter": "m15-hmm-degradation",
+      "repo": "wt-pm-hmm-degradation-states",
+      "title": "HMM Degradation States",
+      "short": "HMM States",
+      "category": "rul",
+      "task": "degradation_state",
+      "status": "integrated (severity-ordered states)",
+      "status_kind": "integrated",
+      "summary": "A Gaussian hidden Markov model that infers the unobservable degradation stage behind a continuous health indicator, and emits a probability over discrete states rather than a number. It answers HOW SEVERE in a form a maintenance planner can act on.",
+      "entry_points": [
+        "GaussianHMM configuration in model.py",
+        "Platform adapter re-orders states by mean health indicator"
+      ],
+      "architecture": [
+        {
+          "block": "Hidden states",
+          "detail": "Discrete degradation stages with Gaussian emission per state"
+        },
+        {
+          "block": "Inference",
+          "detail": "Baum-Welch for parameters, forward-backward for the posterior state distribution given the whole history"
+        },
+        {
+          "block": "Ordering",
+          "detail": "States are permuted so that index == severity, which makes the label stable across refits and seeds"
+        }
+      ],
+      "io": {
+        "input": "health-indicator series",
+        "output": "degradation_state + probability(state)",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "hmmlearn"
+        ],
+        "latency_ms": 1500,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Latent-state inference",
+          "detail": "A hidden state is not a cluster. The posterior is computed over the whole sequence with forward-backward, so yesterday's evidence changes today's state estimate - the smoothing a static classifier cannot do."
+        },
+        {
+          "concept": "Label switching",
+          "detail": "HMM state indices are arbitrary; refitting with a different seed can swap state 1 and state 3. Sorting states by mean health indicator is what turns a research object into a monotone severity scale the platform can report."
+        },
+        {
+          "concept": "States seed the filter",
+          "detail": "The state transition rate is a degradation rate, and m16 consumes it as the process model for a probabilistic RUL posterior. Discrete states plus a continuous filter is the collection's bridge from 'how bad' to 'how long'."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Supplies the degradation_state field that classification and RUL layers attach to"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "Where the agent's SEVERE answer comes from - a posterior over states, not a threshold"
+        },
+        {
+          "layer": "RUL",
+          "detail": "State transitions seed the m16 particle filter"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Scored on state-posterior calibration and transition timing, not on point accuracy alone"
+        }
+      ],
+      "hermes": "rul / severity",
+      "limits": [
+        "Standard HMM assumptions: Gaussian emissions, first-order Markov transitions",
+        "Requires a health indicator that is already monotone in damage"
+      ],
+      "concepts": [
+        "Hidden Markov models",
+        "Baum-Welch",
+        "Forward-backward",
+        "Label switching"
+      ]
+    },
+    {
+      "number": 11,
+      "adapter": "m06-informer-forecast",
+      "repo": "wt-pm-informer-long-sequence",
+      "title": "Informer Long Sequence",
+      "short": "Informer",
+      "category": "anomaly",
+      "task": "forecasting",
+      "status": "partial (placeholder attention)",
+      "status_kind": "partial",
+      "summary": "A long-horizon transformer forecaster for farm power, built on sparse attention that scales linearly instead of quadratically in sequence length. Its forecast residual is an anomaly signal, and its horizon is what makes day-ahead planning possible at all.",
+      "entry_points": [
+        "Informer model in model.py",
+        "ProbSparse attention block - self-declared placeholder upstream"
+      ],
+      "architecture": [
+        {
+          "block": "Encoder",
+          "detail": "ProbSparse self-attention plus a distilling step that halves sequence length per layer"
+        },
+        {
+          "block": "Decoder",
+          "detail": "Generative-style decoder producing the whole forecast horizon in one forward pass"
+        },
+        {
+          "block": "Output",
+          "detail": "Multi-step power forecast; residual against actuals becomes the anomaly score"
+        }
+      ],
+      "io": {
+        "input": "long windows",
+        "output": "prediction (power forecast) + anomaly_score (forecast residual)",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 8000,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": "m03-tcn-power-curve",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Sparse attention",
+          "detail": "Only the queries with the most 'active' attention distributions are evaluated, reducing cost from O(L^2) to O(L log L). That is the entire reason a long-horizon transformer is deployable on 10-minute SCADA at all."
+        },
+        {
+          "concept": "Distilling layers",
+          "detail": "Each encoder layer halves the sequence, so depth buys global context instead of memory. The trade is resolution: fine structure must be captured early or it is gone."
+        },
+        {
+          "concept": "Partial - and labelled that way",
+          "detail": "Upstream ships a placeholder attention implementation. The adapter runs the real graph but the attention is not the published ProbSparse kernel, so the forecast error is honest but the architecture claim is not. Marking it partial is the point."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Forecast-residual anomaly voter and the long-horizon source for power-curve tracking"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool plus planning context for what_if"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m03-tcn-power-curve when torch is unavailable"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Scored on both forecast error and residual-based detection - a good forecaster can be a poor detector"
+        }
+      ],
+      "hermes": "anomaly / planning context",
+      "limits": [
+        "Partial: attention is a placeholder, so results are not the published Informer",
+        "8 s latency - cloud only"
+      ],
+      "concepts": [
+        "Sparse attention",
+        "Long-horizon forecasting",
+        "Distilling",
+        "Residual detection"
+      ]
+    },
+    {
+      "number": 12,
+      "adapter": "m14-isolation-forest",
+      "repo": "wt-pm-isolation-forest-telemetry",
+      "title": "Isolation Forest Telemetry",
+      "short": "Isolation Forest",
+      "category": "anomaly",
+      "task": "anomaly_detection",
+      "status": "integrated (universal fallback)",
+      "status_kind": "integrated",
+      "summary": "An ensemble of random trees that isolates outliers by how few splits they need to become alone. It is the cheapest detector in the collection, needs no training labels, and is the fallback every heavy model degrades to - which makes it the reason the platform still answers when a dependency is missing.",
+      "entry_points": [
+        "IsolationForest wrapper in model.py",
+        "sklearn.ensemble.IsolationForest under the platform adapter"
+      ],
+      "architecture": [
+        {
+          "block": "Ensemble",
+          "detail": "Random subsamples of rows; each tree splits on a random feature at a random threshold"
+        },
+        {
+          "block": "Path length",
+          "detail": "Anomaly score is a monotone function of average isolation depth - short paths are outliers"
+        },
+        {
+          "block": "Scale",
+          "detail": "Near-linear in rows, sub-second on a SCADA window"
+        }
+      ],
+      "io": {
+        "input": "tabular features",
+        "output": "anomaly_score",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "scikit-learn"
+        ],
+        "latency_ms": 400,
+        "deployment": [
+          "cloud",
+          "edge_cpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Isolation instead of profiling",
+          "detail": "Most detectors model normal and measure deviation. Isolation Forest measures how easy a point is to separate - a genuinely different inductive bias, and the reason it stays useful when the 'normal' distribution is multimodal."
+        },
+        {
+          "concept": "Contamination is a decision, not a parameter",
+          "detail": "The model outputs a score; turning it into an alert needs an assumed contamination rate. The platform keeps that choice at the fusion/alert layer so the alert rate is set once for the fleet, not per model."
+        },
+        {
+          "concept": "The fallback that must not fail",
+          "detail": "m03, m04, m05, m13 and m22 all declare m14 as their fallback. That makes it the platform's availability guarantee: no missing torch install can leave a turbine unmonitored."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Anomaly voter and universal fallback - its weight is learned in research mode via evaluation.select_weights"
+        },
+        {
+          "layer": "Edge",
+          "detail": "Sub-second and sklearn-only, so it runs wherever Python runs"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool; also the evidence the agent sees when a heavy detector is unavailable"
+        },
+        {
+          "layer": "Alerting",
+          "detail": "Its score is thresholded through the AlertManager's hysteresis and cooldown, not per call"
+        }
+      ],
+      "hermes": "anomaly",
+      "limits": [
+        "Scores are not probabilities and drift with the contamination assumption",
+        "Blind to temporal structure - it sees a feature vector, not a sequence"
+      ],
+      "concepts": [
+        "Isolation by partitioning",
+        "Contamination",
+        "Ensemble variance",
+        "Availability guarantees"
+      ]
+    },
+    {
+      "number": 13,
+      "adapter": "m05-lstm-scada-anomaly",
+      "repo": "wt-pm-lstm-scada-anomaly",
+      "title": "LSTM SCADA Anomaly (reference contract hub)",
+      "short": "LSTM SCADA",
+      "category": "anomaly",
+      "task": "anomaly_detection",
+      "status": "integrated - reference implementation and platform host",
+      "status_kind": "integrated",
+      "hub": true,
+      "summary": "The original LSTM/GRU autoencoder over the 12-channel SCADA schema - and the repository that defines the contract every other model in the collection adopts: WTDataSchema, the record format, the physics simulator, the drift report, the evaluation protocol, the HTTP API and the unified platform itself.",
+      "entry_points": [
+        "wtpm - the model 13 CLI (demo, serve, train, evaluate)",
+        "wt-pm - the 25-model platform CLI shipped from platform/",
+        "python -m wt_pm_lstm.cli demo --days 60 --epochs 30"
+      ],
+      "architecture": [
+        {
+          "block": "Detector",
+          "detail": "LSTM or GRU sequence autoencoder with a configurable latent bottleneck; reconstruction error per timestamp"
+        },
+        {
+          "block": "Schema",
+          "detail": "12 canonical channels over 10-minute samples, validated by WTDataSchema - temperature, vibration RMS, power, wind, rotor speed, currents, grid frequency"
+        },
+        {
+          "block": "Calibration",
+          "detail": "Threshold chosen on a healthy holdout, with the same protocol the other 24 models are scored under"
+        },
+        {
+          "block": "Drift",
+          "detail": "Rolling distribution comparison between training and live features, reported as a first-class object rather than a footnote"
+        }
+      ],
+      "io": {
+        "input": "values (12 canonical channels) + timestamps",
+        "output": "anomaly_score + uncertainty + explanation",
+        "record": "wt-pm.platform.v1 (schema wt-pm.scada.v1 upstream)",
+        "deps": [
+          "numpy",
+          "wt_pm_lstm"
+        ],
+        "latency_ms": 4000,
+        "deployment": [
+          "cloud",
+          "edge_cpu"
+        ],
+        "fallback": "m14-isolation-forest",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Two numbering schemes, one merge",
+          "detail": "This repository is model 13 of 25 alphabetically and adapter m05-lstm-scada-anomaly by task. Both are printed on every page in the collection so a reader can cross-reference the ecosystem graph and the platform registry without guessing."
+        },
+        {
+          "concept": "Contract-first integration",
+          "detail": "Nothing here is patched into the siblings. Each is wrapped by an adapter that imports its original model.py. The contract is the interface: timestamp, turbine_id and model_id are required; the rest of the record is optional so a model can fill in as little as it honestly knows."
+        },
+        {
+          "concept": "Leak-free windows",
+          "detail": "The protocol module rejects any training window that touches an excluded row and holds past-only state before the first observation. Ten minutes of context is not allowed to smuggle future evidence into a held-out evaluation."
+        },
+        {
+          "concept": "Uncertainty in the record",
+          "detail": "The detector reports an interval alongside its score, which is what lets the fusion engine use inverse-variance weighting instead of treating every vote as equally confident."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Contract",
+          "detail": "Owns WTDataSchema, the record format, the simulator and the fidelity ladder the other 24 pages cite"
+        },
+        {
+          "layer": "Fusion",
+          "detail": "Anomaly voter and the reference implementation of thresholding and attribution"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly and finish; the simulator it ships is what the agent's observations are grounded in"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Defines the held-out protocol, the drift report and the rung-1 fidelity ceiling"
+        },
+        {
+          "layer": "API",
+          "detail": "FastAPI/HTTP service with /health, /ready and the analysis endpoint the Render deployment runs"
+        }
+      ],
+      "hermes": "anomaly / finish (host)",
+      "limits": [
+        "Simulator is synthetic; rung-1 fidelity only",
+        "The platform's numbers describe the wrapped pipelines, not field-validated turbine control"
+      ],
+      "concepts": [
+        "Sequence autoencoders",
+        "Data contracts",
+        "Leak-free evaluation",
+        "Drift detection",
+        "Uncertainty"
+      ]
+    },
+    {
+      "number": 14,
+      "adapter": "m17-mlp-rul",
+      "repo": "wt-pm-mlp-rul-regression",
+      "title": "MLP RUL Regression",
+      "short": "MLP RUL",
+      "category": "rul",
+      "task": "rul_estimation",
+      "status": "integrated (proxy target)",
+      "status_kind": "integrated",
+      "summary": "A plain multi-layer perceptron regressing remaining useful life from accumulated operating hours and features. It exists to be beaten: every fancier prognostic in the collection has to show it adds value over this baseline.",
+      "entry_points": [
+        "MLP regressor in model.py",
+        "sklearn MLPRegressor under the platform adapter"
+      ],
+      "architecture": [
+        {
+          "block": "Input",
+          "detail": "Feature table, optionally including accumulated operating hours"
+        },
+        {
+          "block": "Body",
+          "detail": "One or two hidden layers with ReLU - deliberately small"
+        },
+        {
+          "block": "Target",
+          "detail": "RUL proxy: time to fault onset in the simulator"
+        }
+      ],
+      "io": {
+        "input": "features + RUL proxy target (research mode)",
+        "output": "rul_hours",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "scikit-learn"
+        ],
+        "latency_ms": 1000,
+        "deployment": [
+          "cloud",
+          "edge_cpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Baseline discipline",
+          "detail": "A prognostic result without a baseline is unfalsifiable. Because this model is in the same registry, same protocol and same held-out split, every claim from ConvLSTM, HMM or the particle filter can be stated as an improvement over a number that is visible."
+        },
+        {
+          "concept": "Proxy targets",
+          "detail": "RUL is not measured in the simulator; time-to-fault-onset is. The target is a proxy, and the fidelity ladder says so - which is why 'hours' on these pages are comparable across models and not to a real asset."
+        },
+        {
+          "concept": "Where an MLP wins",
+          "detail": "On short records with strong monotone covariates, a small MLP is hard to beat and impossible to beat on cost. Its weakness is exactly that it cannot represent sequence state - the gap the recurrent and filtering models are supposed to close."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "RUL observation for m16; the reference point in RUL comparisons"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "m02-convlstm-wear falls back here when TensorFlow is missing"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "rul tool - reports the point estimate the probabilistic models must improve on"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Scored with rul_metrics alongside every other prognostic"
+        }
+      ],
+      "hermes": "rul",
+      "limits": [
+        "Proxy RUL target, not measured remaining life",
+        "No uncertainty interval - a point estimate only"
+      ],
+      "concepts": [
+        "Baselines",
+        "Proxy targets",
+        "Regression metrics",
+        "Model comparison"
+      ]
+    },
+    {
+      "number": 15,
+      "adapter": "m16-particle-filter-rul",
+      "repo": "wt-pm-particle-filter-rul",
+      "title": "Particle Filter RUL",
+      "short": "Particle Filter",
+      "category": "rul",
+      "task": "rul_estimation",
+      "status": "complete",
+      "status_kind": "complete",
+      "summary": "A sequential Monte Carlo filter that fuses the RUL observations of its sibling models into a full posterior distribution over remaining life. It is the only prognostic in the collection that reports uncertainty as a distribution rather than a number, and it is pure NumPy - no deep-learning stack required.",
+      "entry_points": [
+        "Particle filter implementation in model.py",
+        "Platform adapter wraps it and feeds sibling RUL estimates as observations"
+      ],
+      "architecture": [
+        {
+          "block": "State",
+          "detail": "Hidden degradation state and its rate of change"
+        },
+        {
+          "block": "Particles",
+          "detail": "Weighted samples propagated through the state-transition model"
+        },
+        {
+          "block": "Update",
+          "detail": "Likelihood from m17 / m02 RUL estimates; resampling when effective sample size collapses"
+        },
+        {
+          "block": "Output",
+          "detail": "Posterior mean and quantiles of remaining useful life"
+        }
+      ],
+      "io": {
+        "input": "RUL observations from m17 / m02 + degradation rate from m15",
+        "output": "rul_hours + uncertainty",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "numpy"
+        ],
+        "latency_ms": 800,
+        "deployment": [
+          "cloud",
+          "edge_cpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Sequential Monte Carlo",
+          "detail": "The posterior is represented by particles instead of a closed form, which is what allows a non-linear degradation model without an extended or unscented Kalman approximation. Cost is linear in particle count and constant in time."
+        },
+        {
+          "concept": "Degeneracy and resampling",
+          "detail": "After a few updates almost all weight concentrates on a handful of particles. The effective-sample-size trigger and systematic resampling are the difference between a working filter and one that silently reports the same number forever."
+        },
+        {
+          "concept": "Fusing siblings, not re-learning",
+          "detail": "This model does not train a network. It treats m17 and m02 outputs as noisy observations and m15's transition rate as the process model - a genuinely composable prognostic, and the clearest example of the collection behaving like a platform."
+        },
+        {
+          "concept": "Interval, not a point",
+          "detail": "A maintenance window needs a quantile, not a mean. The filter returns a distribution, so the planner can quote 'P(failure within 30 days)' rather than a single hour count."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Consumes other models' outputs rather than raw sensors - the fusion layer's downstream client"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "rul tool: supplies the interval that turns a maintenance recommendation into a decision"
+        },
+        {
+          "layer": "Uncertainty",
+          "detail": "One of only two models (with m18 PG-BNN) that emits a calibrated uncertainty field"
+        },
+        {
+          "layer": "Cost/risk",
+          "detail": "Its posterior feeds the CostRiskOptimizer's continue / derate / inspect / trip expected-cost comparison"
+        }
+      ],
+      "hermes": "rul",
+      "limits": [
+        "Result quality is bounded by the observation models it consumes",
+        "State-transition model is a simulator-derived degradation law, not wear physics"
+      ],
+      "concepts": [
+        "Particle filters",
+        "Sequential Monte Carlo",
+        "Resampling and degeneracy",
+        "Posterior intervals"
+      ]
+    },
+    {
+      "number": 16,
+      "adapter": "m18-pg-bnn",
+      "repo": "wt-pm-pg-bnn-wind-turbine",
+      "title": "PG-BNN Physics-Guided Bayesian",
+      "short": "PG-BNN",
+      "category": "physics",
+      "task": "anomaly_detection",
+      "status": "integrated (BNN assembled from the repo's blocks)",
+      "status_kind": "integrated",
+      "summary": "A Bayesian neural network that predicts power under a P = tau * omega physics constraint and reports epistemic uncertainty by Monte Carlo sampling its own weights. It is the collection's answer to 'how much should we trust this model on conditions it has never seen'.",
+      "entry_points": [
+        "BayesianLinear / BNN blocks in model.py",
+        "Platform adapter assembles the full physics-guided model"
+      ],
+      "architecture": [
+        {
+          "block": "Bayesian body",
+          "detail": "BayesianLinear layers sampling weights per forward pass - variational inference over parameters"
+        },
+        {
+          "block": "Physics constraint",
+          "detail": "Loss includes a P = tau * omega consistency term between predicted power, torque and rotor speed"
+        },
+        {
+          "block": "Readout",
+          "detail": "Mean prediction plus MC-sampled variance; power residual feeds the anomaly score"
+        }
+      ],
+      "io": {
+        "input": "torque / rpm / power channels + features",
+        "output": "anomaly_score + uncertainty",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 2500,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Epistemic versus aleatoric",
+          "detail": "A point prediction that is wrong is useless; a prediction with a wide interval because the operating point is novel is actionable. MC sampling over the weight posterior captures the epistemic part - uncertainty that shrinks as data arrives."
+        },
+        {
+          "concept": "Soft physics constraints",
+          "detail": "P = tau * omega is not enforced as a hard layer but as a penalty term. That keeps the model differentiable and lets the data override the constraint where the constraint is wrong - a trade the pages state openly."
+        },
+        {
+          "concept": "Physics and statistics disagree usefully",
+          "detail": "When the physics-guided branch is confident and the statistical detectors are not, the disagreement itself is evidence. Fusion treats m18 as an anomaly voter and an uncertainty source rather than an oracle."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Uncertainty",
+          "detail": "Second of the two uncertainty emitters; enables inverse-variance weighting in the fusion engine"
+        },
+        {
+          "layer": "Physics",
+          "detail": "Receives constraints from the m19 digital twin and returns physics-consistent residuals"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool with an explicit confidence attached to every observation"
+        },
+        {
+          "layer": "RUL",
+          "detail": "Physics-guided uncertainty propagates into m16's RUL posterior"
+        }
+      ],
+      "hermes": "anomaly (with confidence)",
+      "limits": [
+        "Variational approximation, not exact posterior inference",
+        "Physics term is a soft penalty against the simulator's own physics"
+      ],
+      "concepts": [
+        "Bayesian neural networks",
+        "Epistemic uncertainty",
+        "Variational inference",
+        "Physics-informed loss"
+      ]
+    },
+    {
+      "number": 17,
+      "adapter": "m24-quantized-edge",
+      "repo": "wt-pm-quantized-mobilenet-edge",
+      "title": "Quantized MobileNet Edge",
+      "short": "Quantized Edge",
+      "category": "edgeai",
+      "task": "edge_inference",
+      "status": "integrated (INT8 recipe applied to the platform's edge net)",
+      "status_kind": "integrated",
+      "summary": "An INT8 post-training quantization recipe that turns a float model into a TFLite artifact small enough for constrained hardware, with a measured byte size reported on every inference record. On this collection it is applied to a compact edge network, because no image data exists for full MobileNet.",
+      "entry_points": [
+        "TFLite converter + quantization recipe in model.py",
+        "Platform adapter applies it to the platform edge net and reports size_bytes"
+      ],
+      "architecture": [
+        {
+          "block": "Representative dataset",
+          "detail": "A calibration set determines the affine scale and zero point for every activation"
+        },
+        {
+          "block": "Quantization",
+          "detail": "Post-training INT8 conversion - weights and activations to 8-bit integers"
+        },
+        {
+          "block": "Artifact",
+          "detail": "TFLite flatbuffer; size_bytes is emitted on the model output so the edge budget is visible"
+        }
+      ],
+      "io": {
+        "input": "features (+ fault labels for the research fit only)",
+        "output": "prediction + probability + extra['size_bytes']",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "tensorflow"
+        ],
+        "latency_ms": 20000,
+        "deployment": [
+          "cloud",
+          "edge_cpu",
+          "edge_gpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Quantization arithmetic",
+          "detail": "INT8 stores x approximately as scale * (q - zero_point). The whole game is choosing the calibration ranges so that values near zero keep resolution and rare spikes do not dominate the scale."
+        },
+        {
+          "concept": "Accuracy versus footprint",
+          "detail": "Post-training quantization typically costs one to three points of accuracy and roughly 4x in model size. The platform makes that trade visible by reporting size_bytes far more prominently than a percentage it cannot independently verify on target hardware."
+        },
+        {
+          "concept": "Scope honesty",
+          "detail": "Full MobileNet expects 224x224 images. This collection has none, so the recipe is applied to the platform's small edge net. The page says so instead of quoting a MobileNet benchmark that could not have been reproduced here."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Edge",
+          "detail": "Produces the deployable artifact family - the same pipeline that exports the m25 relay's C++ header"
+        },
+        {
+          "layer": "Fusion",
+          "detail": "Its predictions enter the classification vote as a low-power voter"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Accuracy and size are both tracked; a smaller model that lost its class separation is not a win"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "diagnose tool when the deployment target is edge CPU or MCU-adjacent"
+        }
+      ],
+      "hermes": "diagnose (edge targets)",
+      "limits": [
+        "Recipe applied to a compact edge net, not to full 224x224 MobileNet",
+        "Target-hardware latency is not measured - only the cloud build path is end-to-end verified"
+      ],
+      "concepts": [
+        "Post-training quantization",
+        "Calibration ranges",
+        "TFLite",
+        "Accuracy-size trade-offs"
+      ]
+    },
+    {
+      "number": 18,
+      "adapter": "m10-random-forest",
+      "repo": "wt-pm-random-forest-telemetry",
+      "title": "Random Forest Telemetry",
+      "short": "Random Forest",
+      "category": "fault",
+      "task": "fault_classification",
+      "status": "integrated",
+      "status_kind": "integrated",
+      "summary": "A bagged tree ensemble that classifies sensor-diagnostic fault classes and hands its feature importances to the explanation layer. It is the collection's most transparent classifier: every vote can be traced back to impure splits over named channels.",
+      "entry_points": [
+        "RandomForest wrapper in model.py",
+        "sklearn.ensemble.RandomForestClassifier under the adapter"
+      ],
+      "architecture": [
+        {
+          "block": "Bagging",
+          "detail": "Each tree sees a bootstrap resample; averaging decorrelates their errors"
+        },
+        {
+          "block": "Feature subsampling",
+          "detail": "A random feature subset per split keeps trees diverse"
+        },
+        {
+          "block": "Importance",
+          "detail": "Gini importance per feature, exported as model evidence for the XAI bundle"
+        }
+      ],
+      "io": {
+        "input": "features (+ labels in research mode)",
+        "output": "prediction + probability + feature_importances",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "scikit-learn"
+        ],
+        "latency_ms": 600,
+        "deployment": [
+          "cloud",
+          "edge_cpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Bagging versus boosting",
+          "detail": "Random Forest averages deep, low-bias trees; boosting adds shallow, high-bias ones. Averaging is harder to overfit and much easier to explain, which is why both this and m11 exist in the collection rather than one of them."
+        },
+        {
+          "concept": "Gini importance is biased",
+          "detail": "Impurity importance favours high-cardinality and high-variance columns. The platform treats it as a ranked hint and lets m21 SHAP produce the additive, signed attribution - importance ranks, SHAP explains."
+        },
+        {
+          "concept": "Calibration of forest probabilities",
+          "detail": "Averaged leaf votes are not calibrated probabilities. Evaluation computes expected calibration error so an over-confident forest is visible before it reaches an operator."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Fault-class voter; the coverage-aware probability fusion ignores classes a model abstains on"
+        },
+        {
+          "layer": "XAI",
+          "detail": "Supplies feature_importances to the XAI evidence bundle alongside m21 SHAP values"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "diagnose tool - one of the honest votes behind WHERE"
+        },
+        {
+          "layer": "Edge",
+          "detail": "600 ms and sklearn-only: it is one of the classifiers distilled toward the m25 safety path"
+        }
+      ],
+      "hermes": "diagnose",
+      "limits": [
+        "Gini importances are not causal attributions",
+        "Trained on simulator fault classes - the label set is the simulator's, not a plant's"
+      ],
+      "concepts": [
+        "Bagging",
+        "Feature importance",
+        "Probability calibration",
+        "Ensembles"
+      ]
+    },
+    {
+      "number": 19,
+      "adapter": "m07-snn-vibration",
+      "repo": "wt-pm-snn-event-vibration",
+      "title": "SNN Event Vibration",
+      "short": "SNN Vibration",
+      "category": "edgeai",
+      "task": "fault_classification",
+      "status": "integrated (surrogate events)",
+      "status_kind": "integrated",
+      "summary": "A spiking neural network that consumes vibration as asynchronous threshold-crossing events rather than as a sampled waveform, and reads out class evidence from spike rates. It is the collection's ultra-low-power path: spikes cost energy only when they fire.",
+      "entry_points": [
+        "snnTorch network in model.py",
+        "Delta / threshold event encoder supplied by the adapter"
+      ],
+      "architecture": [
+        {
+          "block": "Event encoding",
+          "detail": "A sample is transmitted only when it moves more than delta from the last transmitted value"
+        },
+        {
+          "block": "LIF neurons",
+          "detail": "Leaky integrate-and-fire cells accumulate input until a membrane threshold, then emit a spike and reset"
+        },
+        {
+          "block": "Readout",
+          "detail": "Differentiable membrane potential logits converted to class evidence via spike rates"
+        }
+      ],
+      "io": {
+        "input": "vibration waveforms (event-encoded, surrogate source)",
+        "output": "prediction + probability (spike rate)",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "snntorch",
+          "torch"
+        ],
+        "latency_ms": 5000,
+        "deployment": [
+          "cloud",
+          "edge_cpu",
+          "edge_gpu"
+        ],
+        "fallback": "m01-1dcnn-bearing",
+        "subsystem": "drivetrain"
+      },
+      "advanced": [
+        {
+          "concept": "Spikes as a data format",
+          "detail": "Delta encoding throws away everything that did not change. On a wind turbine that is most samples, which is the real energy argument - not the network, the fact that steady state costs nothing to transmit."
+        },
+        {
+          "concept": "Surrogate gradients",
+          "detail": "A spike is a step function with zero derivative almost everywhere, so backpropagation needs a surrogate gradient. That approximation, not the spiking itself, is where the accuracy comes from - and where it is most fragile."
+        },
+        {
+          "concept": "Membrane potential as evidence",
+          "detail": "Reading the differentiable membrane potential rather than raw spike counts gives a smooth, fusable score. The adapter uses it exactly like any other softmax voter, so the fusion engine needs no special case for neuromorphic hardware."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Drivetrain classification voter, interchangeable with m01's vote in the ensemble"
+        },
+        {
+          "layer": "Edge",
+          "detail": "Listed for edge CPU and GPU - the intended destination of event-driven inference"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "diagnose tool; its spike-rate evidence appears in the agent's observation list"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m01-1dcnn-bearing when snnTorch is unavailable"
+        }
+      ],
+      "hermes": "diagnose",
+      "limits": [
+        "Events are synthesised from surrogate waveforms, not from a neuromorphic sensor",
+        "Energy claims are architectural - no joule measurements on spiking hardware"
+      ],
+      "concepts": [
+        "Spiking neural networks",
+        "Event encoding",
+        "Surrogate gradients",
+        "Neuromorphic inference"
+      ]
+    },
+    {
+      "number": 20,
+      "adapter": "m12-svm-generator",
+      "repo": "wt-pm-svm-rbf-generator-stator",
+      "title": "SVM-RBF Generator Stator",
+      "short": "SVM Stator",
+      "category": "fault",
+      "task": "fault_classification",
+      "status": "integrated (electrical specialist)",
+      "status_kind": "integrated",
+      "summary": "A support-vector machine with an RBF kernel specialised on the electrical channels, separating generator stator and rotor insulation faults from normal converter behaviour. It is the one classifier whose feature space is deliberately narrow: it looks at volts and amps, not at vibration.",
+      "entry_points": [
+        "SVM training script in model.py",
+        "sklearn.svm.SVC(kernel='rbf') under the adapter"
+      ],
+      "architecture": [
+        {
+          "block": "Feature space",
+          "detail": "Electrical channels only - currents, voltages, grid frequency, power factor proxies"
+        },
+        {
+          "block": "Kernel",
+          "detail": "RBF kernel maps features into an implicit higher-dimensional space where a maximum-margin hyperplane separates the classes"
+        },
+        {
+          "block": "Probabilities",
+          "detail": "Platt scaling turns decision-function distances into usable probabilities"
+        }
+      ],
+      "io": {
+        "input": "electrical features (+ labels in research mode)",
+        "output": "prediction + probability",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "scikit-learn"
+        ],
+        "latency_ms": 900,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": "m11-xgboost-tabular",
+        "subsystem": "generator, converter"
+      },
+      "advanced": [
+        {
+          "concept": "The kernel trick",
+          "detail": "An RBF SVM never materialises the higher-dimensional space; it only needs pairwise similarities. That is what lets it draw a curved boundary in a 5-column electrical space without the parameter count of a multilayer network."
+        },
+        {
+          "concept": "Margins on rare events",
+          "detail": "Stator insulation faults are rare, so class-weighted margins matter more than raw accuracy. A model that predicts 'healthy' for everything can look excellent on an unbalanced split."
+        },
+        {
+          "concept": "Platt scaling is not calibration by default",
+          "detail": "The probability outputs come from a fitted sigmoid on decision distances and can be mis-calibrated on shifted data. Expected calibration error is computed at evaluation time alongside ROC-AUC for exactly this reason."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Electrical specialist vote - it usually disagrees with the vibration models, which is the point of a diverse ensemble"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "diagnose tool; narrows WHERE to generator/converter instead of the drivetrain"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m11-xgboost-tabular on non-electrical evidence"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "Scored with ROC-AUC, PR-AUC and calibration on a held-out split"
+        }
+      ],
+      "hermes": "diagnose",
+      "limits": [
+        "Binary electrical-fault separation, not a full fault taxonomy",
+        "Sensitive to the scaling of electrical features - no raw-amplitude inference"
+      ],
+      "concepts": [
+        "Support vector machines",
+        "Kernel methods",
+        "Platt scaling",
+        "Class imbalance"
+      ]
+    },
+    {
+      "number": 21,
+      "adapter": "m03-tcn-power-curve",
+      "repo": "wt-pm-tcn-power-curve",
+      "title": "TCN Power Curve",
+      "short": "TCN Power Curve",
+      "category": "anomaly",
+      "task": "anomaly_detection",
+      "status": "integrated",
+      "status_kind": "integrated",
+      "summary": "A causal temporal convolutional network that tracks the aerodynamic power curve and flags residual drift away from it. It is the collection's fastest way to answer the oldest question in wind O&M: is this turbine producing what its own history says it should at this wind speed?",
+      "entry_points": [
+        "TemporalConvNet in model.py",
+        "Platform adapter trains it against the power channel"
+      ],
+      "architecture": [
+        {
+          "block": "Dilated causal convolutions",
+          "detail": "Kernel size k over L layers with exponentially growing dilation; the receptive field grows as (k-1) * 2^L"
+        },
+        {
+          "block": "Residual blocks",
+          "detail": "Each block adds its input back, which keeps deep stacks trainable"
+        },
+        {
+          "block": "Head",
+          "detail": "Power forecast for the next step; residual against measured power is the anomaly score"
+        }
+      ],
+      "io": {
+        "input": "windows + power_kw channel",
+        "output": "anomaly_score + prediction (power forecast)",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 3000,
+        "deployment": [
+          "cloud",
+          "edge_gpu"
+        ],
+        "fallback": "m04-gru-scada-telemetry",
+        "subsystem": "rotor_blades, converter"
+      },
+      "advanced": [
+        {
+          "concept": "Receptive field by dilation",
+          "detail": "Two conv layers with kernel 3 see 5 samples; with dilation 1, 2, 4 the same two layers see 15. Causal TCNs buy long memory with convolution parallelism instead of recurrence's sequential dependency."
+        },
+        {
+          "concept": "Power curve as the reference",
+          "detail": "The bin-mean power curve is the industry's simplest performance model. Modelling the residual lets the network absorb wind-speed binning, air density and control mode explicitly rather than forcing the reader to attribute them."
+        },
+        {
+          "concept": "Underperformance versus damage",
+          "detail": "A residual can mean blade erosion, a dirty filter, icing or a curtailment instruction. The anomaly record is honest about being a performance signal; classification and XAI decide whether it is a fault."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Anomaly voter and the fallback target for m06's long-horizon forecasts"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool - power-curve residual is the first thing the agent checks on an underperformance question"
+        },
+        {
+          "layer": "RUL",
+          "detail": "Power-curve degradation is an input feature for the RUL regressors"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Receives falls back from m06 and falls back to m04 itself"
+        }
+      ],
+      "hermes": "anomaly",
+      "limits": [
+        "A performance residual is not a fault label - curtailment and icing look identical statistically",
+        "Causal convolutions trade receptive field for latency headroom on the edge"
+      ],
+      "concepts": [
+        "Dilated causal convolutions",
+        "Receptive fields",
+        "Power curves",
+        "Residual monitoring"
+      ]
+    },
+    {
+      "number": 22,
+      "adapter": "m25-tinyml-safety",
+      "repo": "wt-pm-tinyml-esp32-safety-relay",
+      "title": "TinyML ESP32 Safety Relay",
+      "short": "TinyML Safety",
+      "category": "edgeai",
+      "task": "safety",
+      "status": "integrated",
+      "status_kind": "integrated",
+      "summary": "A depth-5 decision tree compiled to C++ and dropped onto an ESP32, plus a mirrored in-loop gate that trips on the same hard limits before SCADA is ever written. It is the only model allowed to say STOP, and the only one whose failure mode is physical.",
+      "entry_points": [
+        "DecisionTree classifier in model.py",
+        "micromlgen export producing model.h for the ESP32 firmware"
+      ],
+      "architecture": [
+        {
+          "block": "Model",
+          "detail": "Depth-5 decision tree over bearing_vib_rms_mm_s, gearbox_oil_temp_c, rotor_speed_rpm and power_kw"
+        },
+        {
+          "block": "Export",
+          "detail": "model.h C++ header generated by micromlgen, compiled into bare-metal firmware"
+        },
+        {
+          "block": "Mirror",
+          "detail": "The SafetyManager re-evaluates the same limits in-process, so the platform's answer and the rail's answer cannot diverge silently"
+        }
+      ],
+      "io": {
+        "input": "safety channels - bearing_vib_rms_mm_s, gearbox_oil_temp_c, rotor_speed_rpm, power_kw",
+        "output": "prediction (trip / continue) + extra['model_h']",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "scikit-learn",
+          "micromlgen (for C++ export)"
+        ],
+        "latency_ms": 50,
+        "deployment": [
+          "cloud",
+          "mcu",
+          "edge_cpu"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Why a five-level tree wins",
+          "detail": "On an ESP32 the constraint is not accuracy, it is deterministic 50 ms latency with no allocator and no floating-point surprise. A depth-5 tree is a handful of comparisons - auditable, certifiable and impossible to make non-deterministic."
+        },
+        {
+          "concept": "Compiled, not served",
+          "detail": "micromlgen emits C++, so the model stops being an artifact and becomes firmware. That is a different trust boundary from every other model here: no dependency can go missing at runtime because there is no runtime."
+        },
+        {
+          "concept": "Two implementations, one truth",
+          "detail": "The C++ tree and the in-loop SafetyManager evaluate the same limits. Divergence between them is a detectable fault of its own - the platform reports the mirrored decision so an operator can see whether the rail and the cloud agree."
+        },
+        {
+          "concept": "Safety is not a vote",
+          "detail": "m25 never enters the fusion weighting. It is excluded from the ensemble by construction: an average of opinions is not a protection function."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Safety gate",
+          "detail": "Hard limits and trips; the only model permitted to veto, and excluded from fusion weighting"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "safety tool - the SAFE answer in the agent's summary"
+        },
+        {
+          "layer": "Edge",
+          "detail": "The only model declaring the MCU deployment target; the router categorically refuses to send any other model there"
+        },
+        {
+          "layer": "Audit",
+          "detail": "Its decisions are recorded in the DecisionAuditLog alongside the analysis that produced them"
+        }
+      ],
+      "hermes": "safety",
+      "limits": [
+        "Fixed depth-5 structure - it cannot express a fault it was not shaped for",
+        "Limits are configuration, not derived from a certified safety case; this is a research demo, not a SIL-rated protection system"
+      ],
+      "concepts": [
+        "TinyML",
+        "Bare-metal constraints",
+        "Software-in-the-loop",
+        "Safety vets voting"
+      ]
+    },
+    {
+      "number": 23,
+      "adapter": "m22-vae-reconstruction",
+      "repo": "wt-pm-vae-reconstruction-loss",
+      "title": "VAE Reconstruction Loss",
+      "short": "VAE Reconstruction",
+      "category": "anomaly",
+      "task": "anomaly_detection",
+      "status": "integrated (uses the repo's vae_loss)",
+      "status_kind": "integrated",
+      "summary": "A variational autoencoder whose reconstruction error flags rare non-linear sensor anomalies, with a latent distribution that makes the score a likelihood rather than a distance. It is the collection's probabilistic reconstruction model.",
+      "entry_points": [
+        "VAE and vae_loss in model.py",
+        "Platform adapter trains and scores with the repository's own loss"
+      ],
+      "architecture": [
+        {
+          "block": "Encoder",
+          "detail": "Maps a window to a Gaussian posterior (mean, log-variance) over the latent code"
+        },
+        {
+          "block": "Reparameterisation",
+          "detail": "z = mu + sigma * epsilon, which keeps the sampling path differentiable"
+        },
+        {
+          "block": "ELBO",
+          "detail": "Reconstruction term minus KL divergence to the prior - the repo's vae_loss"
+        },
+        {
+          "block": "Score",
+          "detail": "Per-timestamp reconstruction error, standardised against the healthy band"
+        }
+      ],
+      "io": {
+        "input": "features / windows",
+        "output": "anomaly_score + uncertainty",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "torch"
+        ],
+        "latency_ms": 1500,
+        "deployment": [
+          "cloud",
+          "edge_gpu"
+        ],
+        "fallback": "m14-isolation-forest",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "ELBO as a compromise",
+          "detail": "The loss balances two goals that fight: reconstruct faithfully and stay close to the prior. Weighting the KL term harder (a beta-VAE) gives a smoother, more regular latent space and blurrier reconstructions - a real dial on how sensitive the detector is."
+        },
+        {
+          "concept": "Posterior collapse",
+          "detail": "If the decoder is expressive enough, it ignores the latent code entirely and the KL term goes to zero. Recognising collapse matters operationally: the model still produces numbers, they are just no longer a latent-variable statement."
+        },
+        {
+          "concept": "Uncertainty from the posterior",
+          "detail": "Because the latent is a distribution, repeated sampling yields a spread on the reconstruction error. That is what the adapter reports as uncertainty, and what lets fusion discount a shaky VAE vote."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Anomaly voter with an attached uncertainty - eligible for inverse-variance weighting"
+        },
+        {
+          "layer": "Evaluation",
+          "detail": "ROC-AUC and PR-AUC against the labelled fault windows, plus calibration on the healthy class"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "anomaly tool; reconstruction attribution per channel feeds explain"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Falls back to m14-isolation-forest without torch"
+        }
+      ],
+      "hermes": "anomaly",
+      "limits": [
+        "Reconstruction error is not a calibrated probability without the healthy-band standardisation",
+        "Latent quality is only as good as the healthy reference window"
+      ],
+      "concepts": [
+        "Variational inference",
+        "ELBO",
+        "Posterior collapse",
+        "Reconstruction error"
+      ]
+    },
+    {
+      "number": 24,
+      "adapter": "m21-xai-shap",
+      "repo": "wt-pm-xai-shap-interpretable",
+      "title": "XAI SHAP Interpretable",
+      "short": "XAI SHAP",
+      "category": "physics",
+      "task": "explainability",
+      "status": "integrated",
+      "status_kind": "integrated",
+      "summary": "A SHAP and LIME interpretation wrapper that turns any black-box alert into per-feature attributions a maintenance engineer can argue with. It is the reason a fused score becomes a root cause instead of a number.",
+      "entry_points": [
+        "explain_with_shap(model, X) - dispatches TreeExplainer for tree models, a generic explainer otherwise",
+        "Platform adapter also exposes SHAP values on the model output"
+      ],
+      "architecture": [
+        {
+          "block": "Explainer dispatch",
+          "detail": "TreeExplainer for m10 / m11, a model-agnostic path for everything else"
+        },
+        {
+          "block": "Attribution",
+          "detail": "Shapley values with the local-accuracy and missingness properties; contributions sum to the prediction minus the base value"
+        },
+        {
+          "block": "Bundle",
+          "detail": "SHAP values + contrastive healthy-band z-scores + feature counterfactuals assembled into the XAI record"
+        }
+      ],
+      "io": {
+        "input": "a fitted tree model + feature matrix",
+        "output": "explanation + extra['shap_values']",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "shap"
+        ],
+        "latency_ms": 5000,
+        "deployment": [
+          "cloud"
+        ],
+        "fallback": null,
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "Shapley values properly",
+          "detail": "SHAP is not a heuristic: it is the unique additive attribution that satisfies local accuracy, missingness and consistency. That uniqueness is the strongest available defence when an engineer asks why the model blamed a specific channel."
+        },
+        {
+          "concept": "TreeExplainer is exact and fast",
+          "detail": "For tree ensembles the Shapley values can be computed in polynomial time, which is why m10 and m11 are the preferred attribution subjects and why the explain tool stays inside a 5 s budget."
+        },
+        {
+          "concept": "Attribution is not causation",
+          "detail": "A high SHAP value says the channel moved the prediction, not that the channel caused the fault. The platform pairs attributions with contrastive healthy-band deviations and a counterfactual so an operator sees three different kinds of evidence rather than one number dressed up as a cause."
+        },
+        {
+          "concept": "Narrative never invents",
+          "detail": "The Hermes narrative is rendered from the adapter's real outputs. If an attribution is unavailable, the explanation says so - the loop is designed to be auditable, not fluent."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "XAI",
+          "detail": "The attribution engine of the platform - the explain tool routes here"
+        },
+        {
+          "layer": "Hermes",
+          "detail": "explain tool: supplies the WHY that operators act on"
+        },
+        {
+          "layer": "Fusion",
+          "detail": "Description, not evidence - it never contributes to the fused score, only to the justification"
+        },
+        {
+          "layer": "Audit",
+          "detail": "Explanations are captured in the DecisionAuditLog with the analysis that produced them"
+        }
+      ],
+      "hermes": "explain",
+      "limits": [
+        "Needs a fitted model to explain - it has no predictive power of its own",
+        "Attributions inherit any bias in the underlying model"
+      ],
+      "concepts": [
+        "Shapley values",
+        "TreeSHAP",
+        "Contrastive explanations",
+        "Counterfactuals"
+      ]
+    },
+    {
+      "number": 25,
+      "adapter": "m11-xgboost-tabular",
+      "repo": "wt-pm-xgboost-tabular-faults",
+      "title": "XGBoost Tabular Faults",
+      "short": "XGBoost Tabular",
+      "category": "fault",
+      "task": "fault_classification",
+      "status": "integrated (primary tabular voter)",
+      "status_kind": "integrated",
+      "summary": "Gradient-boosted trees that classify multi-class component states from structured sensor features, and the primary subject of the platform's SHAP explanations. It is the strongest single tabular classifier in the collection and the one most alerts end up resting on.",
+      "entry_points": [
+        "XGBoost classifier in model.py",
+        "sklearn-API wrapper under the platform adapter (xgboost optional)"
+      ],
+      "architecture": [
+        {
+          "block": "Boosting",
+          "detail": "Trees added sequentially, each fitting the second-order Taylor expansion of the loss - the Newton step that made XGBoost fast"
+        },
+        {
+          "block": "Regularisation",
+          "detail": "Explicit L1/L2 penalties on leaf weights plus a complexity term per tree"
+        },
+        {
+          "block": "Multi-class head",
+          "detail": "One-vs-all softmax over component states"
+        }
+      ],
+      "io": {
+        "input": "features (+ labels in research mode)",
+        "output": "prediction + probability",
+        "record": "wt-pm.platform.v1",
+        "deps": [
+          "xgboost",
+          "scikit-learn"
+        ],
+        "latency_ms": 800,
+        "deployment": [
+          "cloud",
+          "edge_cpu"
+        ],
+        "fallback": "m10-random-forest",
+        "subsystem": ""
+      },
+      "advanced": [
+        {
+          "concept": "The second-order step",
+          "detail": "Boosting with gradient and curvature information converges in far fewer rounds than first-order boosting on the same data. The price is a tighter coupling between loss and implementation - which is why the fallback to m10 exists."
+        },
+        {
+          "concept": "Regularisation is what prevents memorising the plant",
+          "detail": "Leaf-weight penalties and tree complexity terms are the main reason a boosted ensemble does not simply memorise turbine-specific quirks. They are also why the model can be retrained per site without collapsing."
+        },
+        {
+          "concept": "Explainability by construction",
+          "detail": "TreeExplainer computes exact Shapley values for this model in polynomial time, so the strongest classifier also produces the most rigorous explanation - the platform's XAI story rests on that pairing."
+        },
+        {
+          "concept": "Distillation target",
+          "detail": "Its behaviour is what the m25 edge relay approximates with a depth-5 tree, and what m24 compresses to INT8. Accuracy at the centre buys simplicity at the edge."
+        }
+      ],
+      "layers": [
+        {
+          "layer": "Fusion",
+          "detail": "Primary tabular vote in the fault-classification ensemble"
+        },
+        {
+          "layer": "XAI",
+          "detail": "Primary TreeExplainer subject - the explain tool's default"
+        },
+        {
+          "layer": "Edge",
+          "detail": "Distilled into the m25 relay and quantized by m24"
+        },
+        {
+          "layer": "Fallback",
+          "detail": "Receives fallbacks from m01 and m12 when their feature views are unavailable"
+        }
+      ],
+      "hermes": "diagnose / explain",
+      "limits": [
+        "Tabular only - it cannot see raw waveforms or sequence structure",
+        "There are no operator-labelled maintenance records in the collection; the label set comes from the simulator"
+      ],
+      "concepts": [
+        "Gradient boosting",
+        "Second-order optimisation",
+        "TreeSHAP",
+        "Model distillation"
+      ]
+    }
+  ],
+  "edges": [
+    [
+      2,
+      13,
+      "latent feature stream for the reference detector"
+    ],
+    [
+      2,
+      9,
+      "low-bandwidth latent stream for GRU monitoring"
+    ],
+    [
+      19,
+      1,
+      "vibration event spikes for the bearing CNN"
+    ],
+    [
+      17,
+      1,
+      "edge-quantized high-frequency features"
+    ],
+    [
+      17,
+      3,
+      "unlabelled features for SSL pretraining"
+    ],
+    [
+      25,
+      22,
+      "distilled depth-5 tree exported to the ESP32 relay"
+    ],
+    [
+      18,
+      22,
+      "safety-trip rules compiled from the forest"
+    ],
+    [
+      13,
+      25,
+      "anomaly records for fault triage"
+    ],
+    [
+      13,
+      8,
+      "per-turbine records into the fleet graph"
+    ],
+    [
+      13,
+      10,
+      "anomaly scores feed degradation states"
+    ],
+    [
+      13,
+      9,
+      "sibling: same schema, registry and API contract"
+    ],
+    [
+      23,
+      13,
+      "sibling: reconstruction-loss scoring compared head-to-head"
+    ],
+    [
+      6,
+      20,
+      "boundary outliers routed to the stator/rotor check"
+    ],
+    [
+      12,
+      8,
+      "fleet-wide outliers into cascade analysis"
+    ],
+    [
+      11,
+      21,
+      "long-horizon power forecast vs the actual curve"
+    ],
+    [
+      21,
+      14,
+      "power-curve degradation as a RUL feature"
+    ],
+    [
+      3,
+      1,
+      "SSL representations for the bearing classifier"
+    ],
+    [
+      3,
+      20,
+      "SSL representations for the SVM kernel"
+    ],
+    [
+      1,
+      4,
+      "bearing fault labels drive wear tracking"
+    ],
+    [
+      5,
+      4,
+      "DBN feature hierarchy for the wear model"
+    ],
+    [
+      5,
+      14,
+      "learned features into the RUL regressor"
+    ],
+    [
+      10,
+      15,
+      "state transitions seed the particle filter"
+    ],
+    [
+      8,
+      15,
+      "cascade risk conditions the RUL update"
+    ],
+    [
+      14,
+      15,
+      "baseline the filter must beat"
+    ],
+    [
+      7,
+      13,
+      "physics residuals sharpen detection"
+    ],
+    [
+      7,
+      16,
+      "twin constraints for the PG-BNN"
+    ],
+    [
+      16,
+      15,
+      "physics-guided uncertainty into the RUL posterior"
+    ],
+    [
+      25,
+      24,
+      "SHAP explanations of boosted-tree alerts"
+    ],
+    [
+      18,
+      24,
+      "feature importances for root cause"
+    ],
+    [
+      1,
+      24,
+      "vibration alert explanations"
+    ],
+    [
+      16,
+      24,
+      "explaining a physics-guided, uncertainty-carrying alert"
+    ]
+  ],
+  "advanced_layers": [
+    {
+      "key": "fusion",
+      "name": "Fusion engine",
+      "what": "Combines the votes of the 25 models into one answer.",
+      "how": "Weighted, confidence-weighted, max and median rules; inverse-variance weighting when a model reports uncertainty; coverage-aware probability fusion so a voter that abstains on a class does not dilute it.",
+      "why": "Twenty-five opinions are not an answer. Weights come from held-out validation performance in research mode (evaluation.select_weights) and are reported next to any fused score.",
+      "models": [
+        3,
+        4,
+        6,
+        9,
+        10,
+        11,
+        12,
+        13,
+        16,
+        18,
+        20,
+        21,
+        22,
+        23,
+        25
+      ]
+    },
+    {
+      "key": "uncertainty",
+      "name": "Calibrated uncertainty",
+      "what": "Every alert carries an interval or a confidence, not just a number.",
+      "how": "MC-sampled Bayesian weights (m18), latent-posterior spread (m22), a particle posterior (m16) and the LSTM detector's own interval; expected calibration error is computed at evaluation time.",
+      "why": "A number without an interval cannot be compared with another number. Uncertainty is what allows a confident detector to outvote a shaky one, and what makes 'we do not know' a reportable state.",
+      "models": [
+        13,
+        16,
+        15,
+        22
+      ]
+    },
+    {
+      "key": "drift",
+      "name": "Drift and data trust",
+      "what": "Detects that the world, or the sensor, has moved.",
+      "how": "Rolling distribution comparison between training and live features (evaluation.drift_report) plus an unsupervised SensorQualityMonitor for freeze, spike, stuck-at and out-of-range conditions.",
+      "why": "A detector that fires because the weather changed is worse than no detector. Trust the data before trusting the models - sensor quality flags gate the safety manager and the dashboard's trust badge.",
+      "models": [
+        2,
+        3,
+        5,
+        6,
+        13
+      ]
+    },
+    {
+      "key": "xai",
+      "name": "Explainability",
+      "what": "Turns an alert into a root cause an engineer can argue with.",
+      "how": "m21 SHAP TreeExplainer attributions, contrastive healthy-band z-scores, per-feature counterfactuals, and a Hermes narrative rendered only from real outputs.",
+      "why": "Maintenance is a decision made by a person. An explanation that cannot be falsified is not an explanation - attributions are labelled as associations, never as causes.",
+      "models": [
+        24,
+        25,
+        18,
+        1
+      ]
+    },
+    {
+      "key": "physics",
+      "name": "Physics constraints",
+      "what": "Keeps the learning inside what the machine can actually do.",
+      "how": "A digital-twin surrogate (m19) supplies residuals and what-if counterfactuals; the PG-BNN (m18) embeds P = tau * omega as a soft penalty and returns physics-consistent uncertainty.",
+      "why": "Purely statistical models extrapolate confidently and wrongly outside their envelope. Physics does not replace the detectors - it disagrees with them, visibly.",
+      "models": [
+        7,
+        16
+      ]
+    },
+    {
+      "key": "safety",
+      "name": "Safety gate",
+      "what": "The one path that is allowed to say STOP.",
+      "how": "A depth-5 decision tree exported to model.h for an ESP32 (m25) plus a mirrored in-process SafetyManager evaluating the same hard limits, with hysteresis and cooldown in the alert manager.",
+      "why": "Safety is excluded from the ensemble by construction: an average of opinions is not a protection function, and no missing Python dependency may disable a trip.",
+      "models": [
+        22
+      ]
+    },
+    {
+      "key": "protocol",
+      "name": "Evaluation protocol",
+      "what": "Makes every number in the collection comparable.",
+      "how": "Leak-free window masks, past-only holdout state, ROC-AUC / PR-AUC / calibration / RUL metrics, an experiment tracker, and the fidelity ladder that labels every claim rung 1.",
+      "why": "The collection's credibility comes from stating what a metric may claim. Surrogate waveforms, proxy RUL targets and simulator labels are declared on every page rather than buried.",
+      "models": [
+        13,
+        1,
+        3,
+        5,
+        15
+      ]
+    },
+    {
+      "key": "hermes",
+      "name": "Hermes agent",
+      "what": "A Thought -> Action -> Observation loop that decides which model to ask next.",
+      "how": "Eight tools: sensor_quality, anomaly, diagnose, explain, rul, safety, what_if, finish. Observations are adapter outputs; the agent never invents a measurement.",
+      "why": "Operators do not ask 'what is the SVDD distance'. They ask WHAT, WHERE, WHY, HOW SEVERE, HOW LONG, WHAT NEXT and IS IT SAFE - the loop answers in that order and stops when the question is answered.",
+      "models": [
+        13,
+        24,
+        22,
+        7,
+        16,
+        15,
+        9,
+        25
+      ]
+    }
+  ],
+  "concept_index": {
+    "Accuracy-size trade-offs": [
+      17
+    ],
+    "Availability guarantees": [
+      12
+    ],
+    "Bagging": [
+      18
+    ],
+    "Bare-metal constraints": [
+      22
+    ],
+    "Baselines": [
+      14
+    ],
+    "Baum-Welch": [
+      10
+    ],
+    "Bayesian neural networks": [
+      16
+    ],
+    "Bottleneck autoencoders": [
+      2
+    ],
+    "Calibration ranges": [
+      17
+    ],
+    "Class imbalance": [
+      20
+    ],
+    "Contamination": [
+      12
+    ],
+    "Contrastive divergence": [
+      5
+    ],
+    "Contrastive embeddings": [
+      3
+    ],
+    "Contrastive explanations": [
+      24
+    ],
+    "ConvLSTM": [
+      4
+    ],
+    "Counterfactuals": [
+      7,
+      24
+    ],
+    "Data contracts": [
+      13
+    ],
+    "Dilated causal convolutions": [
+      21
+    ],
+    "Distilling": [
+      11
+    ],
+    "Drift detection": [
+      13
+    ],
+    "ELBO": [
+      23
+    ],
+    "Edge inference": [
+      9
+    ],
+    "Energy-based models": [
+      5
+    ],
+    "Ensemble variance": [
+      12
+    ],
+    "Ensembles": [
+      18
+    ],
+    "Epistemic uncertainty": [
+      16
+    ],
+    "Event encoding": [
+      19
+    ],
+    "Feature hierarchies": [
+      5
+    ],
+    "Feature importance": [
+      18
+    ],
+    "Fleet-level risk": [
+      8
+    ],
+    "Forecast residuals": [
+      9
+    ],
+    "Forward-backward": [
+      10
+    ],
+    "Gated recurrence": [
+      9
+    ],
+    "Graceful degradation": [
+      4
+    ],
+    "Gradient boosting": [
+      25
+    ],
+    "Graph neural networks": [
+      8
+    ],
+    "Greedy layerwise pretraining": [
+      5
+    ],
+    "Hidden Markov models": [
+      10
+    ],
+    "Hypersphere collapse": [
+      6
+    ],
+    "Isolation by partitioning": [
+      12
+    ],
+    "Kernel methods": [
+      20
+    ],
+    "Label switching": [
+      10
+    ],
+    "Latent features": [
+      2
+    ],
+    "Leak-free evaluation": [
+      13
+    ],
+    "Linear probing": [
+      3
+    ],
+    "Long-horizon forecasting": [
+      11
+    ],
+    "Message passing": [
+      8
+    ],
+    "Model comparison": [
+      14
+    ],
+    "Model distillation": [
+      25
+    ],
+    "NT-Xent": [
+      3
+    ],
+    "Neuromorphic inference": [
+      19
+    ],
+    "One-class learning": [
+      6
+    ],
+    "Operating envelopes": [
+      7
+    ],
+    "Particle filters": [
+      15
+    ],
+    "Physics residuals": [
+      7
+    ],
+    "Physics-informed loss": [
+      16
+    ],
+    "Platt scaling": [
+      20
+    ],
+    "Post-training quantization": [
+      17
+    ],
+    "Posterior collapse": [
+      23
+    ],
+    "Posterior intervals": [
+      15
+    ],
+    "Power curves": [
+      21
+    ],
+    "Probability calibration": [
+      18
+    ],
+    "Proxy targets": [
+      14
+    ],
+    "RUL uncertainty": [
+      4
+    ],
+    "Rate-distortion": [
+      2
+    ],
+    "Receptive fields": [
+      1,
+      21
+    ],
+    "Reconstruction error": [
+      2,
+      23
+    ],
+    "Regression metrics": [
+      14
+    ],
+    "Representation learning": [
+      6
+    ],
+    "Resampling and degeneracy": [
+      15
+    ],
+    "Residual detection": [
+      11
+    ],
+    "Residual monitoring": [
+      21
+    ],
+    "Robust calibration": [
+      6
+    ],
+    "Safety vets voting": [
+      22
+    ],
+    "Score standardisation": [
+      9
+    ],
+    "Second-order optimisation": [
+      25
+    ],
+    "Self-supervised learning": [
+      3
+    ],
+    "Sequence autoencoders": [
+      13
+    ],
+    "Sequential Monte Carlo": [
+      15
+    ],
+    "Shapley values": [
+      24
+    ],
+    "Softmax calibration": [
+      1
+    ],
+    "Software-in-the-loop": [
+      22
+    ],
+    "Sparse attention": [
+      11
+    ],
+    "Spatiotemporal fields": [
+      4
+    ],
+    "Spiking neural networks": [
+      19
+    ],
+    "Support vector machines": [
+      20
+    ],
+    "Surrogate data": [
+      1
+    ],
+    "Surrogate gradients": [
+      19
+    ],
+    "Surrogate modelling": [
+      7
+    ],
+    "TFLite": [
+      17
+    ],
+    "TinyML": [
+      22
+    ],
+    "Transfer learning": [
+      1
+    ],
+    "TreeSHAP": [
+      24,
+      25
+    ],
+    "Uncertainty": [
+      13
+    ],
+    "Variational inference": [
+      16,
+      23
+    ],
+    "Wake coupling": [
+      8
+    ]
+  }
+}
