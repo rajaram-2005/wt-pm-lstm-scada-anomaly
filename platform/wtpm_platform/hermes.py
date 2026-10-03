@@ -115,11 +115,13 @@ class HermesAgent:
         shap = why.get("contributing_features") or {}
         top = list(shap.items())[:5]
         contrast = contrastive_channels(batch)
+        physics = last.get("physics") or {}
         obs = {
             "shap_top": {k: round(v, 4) for k, v in top},
             "signals": why.get("relevant_sensor_signals"),
             "contrast_vs_healthy": contrast,
-            "physics_residual_kw": (last.get("physics") or {}).get("power_residual_kw_now"),
+            "physics_residual_kw": physics.get("power_residual_kw_now"),
+            "pg_bnn": physics.get("pg_bnn"),
         }
         mem["explain"] = obs
         return obs
@@ -172,6 +174,7 @@ class HermesAgent:
             "why": {
                 "shap_top": e.get("shap_top"),
                 "contrast": e.get("contrast_vs_healthy"),
+                "pg_bnn": e.get("pg_bnn"),
                 "narrative": narrative(d, e, a, r, s),
             },
             "severity": r.get("degradation_state"),
@@ -263,6 +266,15 @@ def narrative(diagnosis, explain, anomaly, rul, safety) -> str:
     ]
     if hot:
         bits.append("Contrast vs healthy band: " + ", ".join(hot) + ".")
+    pg = explain.get("pg_bnn") or {}
+    if pg.get("status") == "ok":
+        bits.append(
+            "PG-BNN power estimate "
+            f"{pg['power_predicted_kw']:.1f} kW (measured {pg['power_observed_kw']:.1f} kW; "
+            f"measured-minus-predicted residual {pg['power_residual_kw']:+.1f} kW; "
+            f"physics residual {pg['physics_residual_kw']:+.1f} kW; "
+            f"MC epistemic σ {pg['epistemic_std_kw']:.2f} kW, uncalibrated)."
+        )
     if hours is not None:
         bits.append(f"RUL ≈ {hours} h.")
     bits.append(f"Safety={dec}; recommended action={act}.")

@@ -4,6 +4,9 @@ Unified wind-turbine predictive-maintenance platform: **25 models, one orchestra
 
 GitHub architecture for the whole collection: [ARCHITECTURE.md](../ARCHITECTURE.md)
 
+**SCADA / web deployment protocol:** [step-by-step integration, tag mapping,
+API examples, security boundaries, limitations and field-validation gates](../docs/SCADA_WEBSITE_INTEGRATION_PROTOCOL.md).
+
 ```bash
 pip install -e platform          # from this monorepo
 wt-pm inspect

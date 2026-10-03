@@ -39,6 +39,66 @@ from wtpm_platform.advanced import (
 from wtpm_platform.hermes import HermesAgent
 
 
+def _pg_bnn_summary(output: Optional[ModelOutput]) -> Optional[Dict[str, Any]]:
+    """Expose the PG-BNN power/physics cross-check as JSON-safe diagnostics."""
+    if output is None or not output.ok:
+        return None
+    fields = (
+        "power_observed_kw", "power_pred_kw", "power_std_kw",
+        "power_residual_kw", "physics_expected_power_kw", "physics_residual_kw",
+        "epistemic_lower_approx_95_kw", "epistemic_upper_approx_95_kw",
+    )
+    arrays: Dict[str, np.ndarray] = {}
+    n = len(output.timestamps)
+    if n == 0:
+        return {"status": "invalid_output", "error": "PG-BNN output is empty"}
+    missing = []
+    for name in fields:
+        value = (output.extra or {}).get(name)
+        if value is None:
+            missing.append(name)
+            continue
+        arr = np.asarray(value, dtype=float)
+        if arr.shape != (n,) or not np.isfinite(arr).all():
+            return {"status": "invalid_output", "error": f"{name} must be a finite vector of length {n}"}
+        arrays[name] = arr
+    if missing:
+        return {"status": "invalid_output", "error": f"missing PG-BNN diagnostics: {', '.join(missing)}"}
+
+    if np.any(arrays["power_std_kw"] < 0):
+        return {"status": "invalid_output", "error": "power_std_kw cannot be negative"}
+    if np.any(arrays["epistemic_lower_approx_95_kw"] > arrays["epistemic_upper_approx_95_kw"]):
+        return {"status": "invalid_output", "error": "epistemic band lower bound exceeds upper bound"}
+    last = {name: float(values[-1]) for name, values in arrays.items()}
+    return {
+        "status": "ok",
+        "power_observed_kw": round(last["power_observed_kw"], 3),
+        "power_predicted_kw": round(last["power_pred_kw"], 3),
+        "power_residual_kw": round(last["power_residual_kw"], 3),
+        "physics_expected_power_kw": round(last["physics_expected_power_kw"], 3),
+        "physics_residual_kw": round(last["physics_residual_kw"], 3),
+        "epistemic_std_kw": round(last["power_std_kw"], 3),
+        "epistemic_band_approx_95_kw": [
+            round(last["epistemic_lower_approx_95_kw"], 3),
+            round(last["epistemic_upper_approx_95_kw"], 3),
+        ],
+        "anomaly_score": None if output.anomaly_score is None
+        else round(float(output.anomaly_score[-1]), 3),
+        "anomaly_uncertainty": None if output.uncertainty is None
+        else round(float(output.uncertainty[-1]), 4),
+        "uncertainty_note": (
+            "Monte-Carlo epistemic weight spread; the approximate band is not "
+            "a calibrated predictive-coverage interval"
+        ),
+        "series": {
+            "power_observed_kw": downsample_series(arrays["power_observed_kw"]),
+            "power_predicted_kw": downsample_series(arrays["power_pred_kw"]),
+            "epistemic_std_kw": downsample_series(arrays["power_std_kw"]),
+            "physics_residual_kw": downsample_series(arrays["physics_residual_kw"]),
+        },
+    }
+
+
 def build_default_registry() -> ModelRegistry:
     """Register all 25 adapters. Unavailable ones stay registered but report so."""
     from wtpm_platform.adapters.anomaly import (
@@ -417,6 +477,9 @@ class Orchestrator:
                 "power_residual_kw_mean": round(float(np.mean(pr)), 3),
                 "series": downsample_series(pr),
             }
+        pg_bnn = _pg_bnn_summary(rep_anom.outputs.get("m18-pg-bnn"))
+        if pg_bnn is not None:
+            physics["pg_bnn"] = pg_bnn
         series = {
             "fused_score": [] if fused is None else downsample_series(fused.score),
             "health_index": hidx["series"],

@@ -124,9 +124,13 @@ additional security, persistence and validation.
 GitHub Pages serves the static website only. The Python dashboard and model
 inference need a separate server; Pages cannot replace that runtime.
 
+For the full-platform SCADA flow, canonical turbine tag map, `/scada` request
+examples, secure website proxy pattern, staged field-validation checklist and
+current integration limits, see the [SCADA and website integration protocol](docs/SCADA_WEBSITE_INTEGRATION_PROTOCOL.md).
+
 ## Deploy the dashboard/API
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/arena/01a0cc04-wt-pm-lstm-scada-anomaly)
+[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/main)
 
 Deploy the Docker-based command center on Render using the included
 `render.yaml`. You must sign in to Render and approve the deployment.
@@ -194,6 +198,24 @@ Five things worth knowing before reading the code:
    its own alarm rule, labelled differently in the records.
 5. **The threshold is an operational budget** — ten minutes of alarm time per
    day on healthy machines — not a magic quantile.
+
+### Optional PG-BNN physics cross-check
+
+In the unified platform's full profile, model `m18-pg-bnn` uses the original
+`wt-pm-pg-bnn-wind-turbine` Bayesian layers and `P = τω` loss to forecast power
+from wind, temperature, rotor speed, pitch and torque. Its `/analyse` response
+includes `physics.pg_bnn`: measured and predicted power, measured-minus-model
+residual, the efficiency-adjusted mechanical-power residual, and Monte-Carlo
+weight spread. Hermes repeats those diagnostics in its explanation. Inference
+uses a fixed, isolated posterior sample bank for reproducible comparisons and
+calibrates residuals on a held-out healthy tail of the permitted training data.
+
+The approximate `mean ± 1.96 × MC standard deviation` band is **epistemic only**;
+it is not a calibrated coverage interval, an aleatoric noise estimate or a
+safety guarantee. The minimal deployment profile may not include PyTorch or the
+sibling source, so model 18 can be unavailable there. See
+[`platform/docs/CORRECTNESS_AUDIT.md`](platform/docs/CORRECTNESS_AUDIT.md) for the
+remaining limits.
 
 ## The interfaces (what other models can consume)
 

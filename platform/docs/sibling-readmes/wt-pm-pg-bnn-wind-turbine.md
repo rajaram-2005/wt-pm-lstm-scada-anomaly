@@ -18,7 +18,7 @@ independently usable (`python model.py`). The unified **wt-pm** platform wraps t
 
 | Symbol | What it is |
 |---|---|
-| `PhysicsGuidedLoss(lambda_physics=0.1)` | MSE data loss + the mechanical-power constraint `P = τ · ω` with `ω = 2π·RPM/60` |
+| `PhysicsGuidedLoss(lambda_physics=0.1)` | MSE data loss + soft mechanical-power penalty; the adapter scales the relation to `P_electric ≈ 0.94 × τ · ω` in consistent kW units |
 | `BayesianLinear(in_features, out_features)` | reparameterised linear layer with per-weight `mu`/`logvar` |
 
 The repo ships the blocks, not a full network: the platform assembles a small BNN from
@@ -52,9 +52,9 @@ are the exact symbols the platform adapter calls.
 
 | | |
 |---|---|
-| Input (adapter view) | torque / rpm / power context channels + tabular features |
-| Output (WTDataSchema) | anomaly_score, uncertainty — Monte-Carlo sampled predictive spread |
-| Integration role | Physics-aware anomaly stream: predicts power from context under the P=τω loss; large physics-consistent residuals flag anomalies with calibrated uncertainty. |
+| Input (adapter view) | wind speed, ambient temperature, rotor speed, pitch, torque; measured power is the prediction target |
+| Output (WTDataSchema) | anomaly_score + uncertainty; `/analyse` adds predicted/measured power and model/physics residuals under `physics.pg_bnn` |
+| Integration role | Physics-aware anomaly voter with held-out healthy residual calibration and repeatable Monte-Carlo epistemic spread; the spread is not calibrated uncertainty. |
 | Deployment / fallback | cloud · torch · no fallback |
 
 Records follow `WTDataSchema` (`wt-pm.platform.v1`): `timestamp`, `turbine_id` and `model_id` are required;
@@ -62,7 +62,7 @@ this adapter also fills `anomaly_score`, `uncertainty`, `inference_time_ms` and 
 
 ## Hermes agent + explainable AI
 
-The BNN's uncertainty is quoted in Hermes observations whenever it is routed; observations are the adapter's real outputs — never invented. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals.
+When m18 runs, Hermes carries its measured/predicted power, model and physics residuals, and MC epistemic spread as tool observations; it does not invent them. The adapter's output is also visible in the `/analyse` response and dashboard. XAI is m21 SHAP + contrastive healthy-band z + counterfactuals.
 
 To run this model inside the platform (Python ≥ 3.10):
 
@@ -81,4 +81,5 @@ and the [per-model table](https://github.com/rajaram-2005/wt-pm-lstm-scada-anoma
 
 - The repo ships loss + layer blocks only; the platform assembles and trains the network (documented in the registry notes).
 - The corrected adapter feeds **predicted** power into the physics term and normalises both sides in kW, so the constraint actually gradients the weights.
+- The held-out healthy tail calibrates model residuals only; posterior spread and the approximate `mean ± 1.96σ` band are not calibrated coverage guarantees.
 - Metrics on the platform are held-out **simulator** records (fidelity rung 1), not certified asset performance.

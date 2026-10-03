@@ -1409,16 +1409,16 @@
         },
         {
           "block": "Physics constraint",
-          "detail": "Loss includes a P = tau * omega consistency term between predicted power, torque and rotor speed"
+          "detail": "Soft efficiency-adjusted mechanical-power penalty: P_electric ≈ 0.94 × τ × ω, with torque and power normalised in consistent kW units"
         },
         {
           "block": "Readout",
-          "detail": "Mean prediction plus MC-sampled variance; power residual feeds the anomaly score"
+          "detail": "Monte-Carlo mean and epistemic weight spread; measured power, model residual and physics residual are returned as platform diagnostics"
         }
       ],
       "io": {
-        "input": "torque / rpm / power channels + features",
-        "output": "anomaly_score + uncertainty",
+        "input": "wind speed, ambient temperature, rotor speed, pitch, torque and measured power (the prediction target)",
+        "output": "WTDataSchema anomaly_score + uncertainty; /analyse physics.pg_bnn adds power prediction, MC spread and measured/model/physics residual diagnostics",
         "record": "wt-pm.platform.v1",
         "deps": [
           "torch"
@@ -1433,15 +1433,15 @@
       "advanced": [
         {
           "concept": "Epistemic versus aleatoric",
-          "detail": "A point prediction that is wrong is useless; a prediction with a wide interval because the operating point is novel is actionable. MC sampling over the weight posterior captures the epistemic part - uncertainty that shrinks as data arrives."
+          "detail": "Monte-Carlo sampling over the variational weight posterior estimates an epistemic component; a fixed sample bank makes repeated requests comparable. It is not aleatoric sensor noise, and neither the spread nor the approximate mean ± 1.96σ band guarantees calibrated coverage."
         },
         {
           "concept": "Soft physics constraints",
-          "detail": "P = tau * omega is not enforced as a hard layer but as a penalty term. That keeps the model differentiable and lets the data override the constraint where the constraint is wrong - a trade the pages state openly."
+          "detail": "The loss applies a soft penalty around P_electric ≈ 0.94 × τ × ω using consistent kW scaling. The measured-minus-physics residual is also exposed at inference, so an operator can compare the data fit with the mechanical cross-check without treating either as ground truth."
         },
         {
           "concept": "Physics and statistics disagree usefully",
-          "detail": "When the physics-guided branch is confident and the statistical detectors are not, the disagreement itself is evidence. Fusion treats m18 as an anomaly voter and an uncertainty source rather than an oracle."
+          "detail": "The adapter reports predicted power, measured-minus-predicted error, efficiency-adjusted mechanical power and epistemic spread. Fusion uses m18 as an uncertainty-aware anomaly voter; its diagnostics are observations, not an oracle or a calibrated fault probability."
         }
       ],
       "layers": [
@@ -1451,11 +1451,11 @@
         },
         {
           "layer": "Physics",
-          "detail": "Receives constraints from the m19 digital twin and returns physics-consistent residuals"
+          "detail": "Applies the efficiency-adjusted P=τω penalty during fitting and returns the measured-versus-physics residual under physics.pg_bnn"
         },
         {
           "layer": "Hermes",
-          "detail": "anomaly tool with an explicit confidence attached to every observation"
+          "detail": "Hermes explain observations include the measured/predicted power, residuals and MC epistemic spread when m18 ran"
         },
         {
           "layer": "RUL",
@@ -1465,7 +1465,8 @@
       "hermes": "anomaly (with confidence)",
       "limits": [
         "Variational approximation, not exact posterior inference",
-        "Physics term is a soft penalty against the simulator's own physics"
+        "Physics term is a soft penalty against the simulator's own physics",
+        "MC epistemic spread and the approximate mean ± 1.96σ band are not calibrated coverage intervals"
       ],
       "concepts": [
         "Bayesian neural networks",

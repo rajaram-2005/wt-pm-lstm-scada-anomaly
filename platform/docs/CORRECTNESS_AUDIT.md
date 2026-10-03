@@ -65,7 +65,7 @@ remaining-lifetime guarantee is claimed.
 | m15 HMM | Training scaler fixed; disconnected training lengths preserved; forward filtering instead of future-aware smoothing; ordered states | Ordered latent means do not prove physical degradation stages |
 | m16 particle filter | First-observation initialization, actual elapsed hours, finite observation/state checks, isolated reproducible NumPy RNG | Filters upstream RUL proxies; uncertainty is not field-calibrated |
 | m17 MLP RUL | Masked fitting; timestamp-based proxy ignores excluded future fault labels | Censored 400 h horizon/time-to-onset is **not measured component lifetime** |
-| m18 physics BNN | Predicted power participates in physics loss; kW/scaling consistency; nonzero weight gradient; Gaussian KL regularizer | MC estimates vary between calls; posterior/uncertainty not calibrated; small research BNN |
+| m18 physics BNN | Predicted power participates in physics loss; kW/scaling consistency; nonzero weight gradient; Gaussian KL regularizer; held-out healthy residual calibration; repeatable isolated MC weight samples; measured/predicted/physics residual diagnostics | Posterior and MC uncertainty are still uncalibrated; approximate epistemic band is not a coverage guarantee; small research BNN |
 | m19 twin surrogate | Training-only vibration baseline and row-local fatigue proxy | No FEA validation, causal intervention proof or physical fatigue lifetime |
 | m20 GNN | Fit only in training; frozen scaler/weights in prediction; matching vibration feature units; per-step outputs and checked graph indices | Supervision is a vibration-risk proxy on self-loops, **not learned wake/cascade dynamics** |
 | m21 SHAP | Genuine upstream TreeExplainer execution, bound only to fitted supported tree; no fake connected success | Explains that tree, not causality or every fused model |
@@ -114,11 +114,27 @@ sources; its separate `--network none` smoke test verifies offline execution.
 Generated reports, sources, model weights and datasets stay ignored by Git.
 
 Regression coverage includes invalid masks for all 25 adapters; poisoned excluded
-future rows for RF/XGBoost/IsolationForest/MLP; causal features/window boundaries;
+future rows for RF/XGBoost/IsolationForest/MLP/PG-BNN; causal features/window boundaries;
 Informer target independence; GNN weight immutability; physics-loss units and
 gradients; NT-Xent negatives; particle-filter causality; timestamp alignment;
 probability contracts; safety failures; and independent-record all-25 execution
 including repeated inference, real SHAP and INT8 I/O.
+
+## PG-BNN integration update — 3 October 2026
+
+The m18 adapter now rejects incomplete/non-finite SCADA inputs and fault-labelled
+training rows, reserves a healthy tail for residual calibration, and draws a
+fixed, isolated Monte-Carlo weight sample bank so repeat inference neither
+changes scores nor consumes the caller's PyTorch RNG state. The platform exposes
+measured and predicted power, model and physics residuals, epistemic standard
+deviation, and an explicitly approximate `mean ± 1.96σ` band under
+`physics.pg_bnn`; Hermes and the dashboard surface the same observations.
+
+The band is not calibrated coverage and the Bayesian posterior remains an
+approximation. Full PyTorch/source-backed execution is required to run the m18
+training/inference regression tests; the normal lean-profile test run verifies
+the JSON summary, missing-channel handling and Hermes transport without that
+optional dependency.
 
 ## What still requires real validation
 

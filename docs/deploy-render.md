@@ -2,16 +2,18 @@
 
 This deploys the **Python command center**, not the static launch website.
 It is a public **research demo with simulated SCADA**, not an operational
-monitoring or turbine-control service.
+monitoring or turbine-control service. For the private, read-only SCADA and
+website integration design (and its current implementation gaps), see the
+[SCADA integration protocol](SCADA_WEBSITE_INTEGRATION_PROTOCOL.md).
 
 ## Create the service
 
-1. Open [Deploy to Render](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/arena/01a0cc04-wt-pm-lstm-scada-anomaly).
+1. Open [Deploy to Render](https://render.com/deploy?repo=https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/tree/main).
 2. Sign in to Render. If prompted, authorize Render's GitHub integration for
    `rajaram-2005/wt-pm-lstm-scada-anomaly`. Do not share access tokens in chat.
 3. Review the Blueprint. It creates one Docker web service named
    `wt-pm-command-center`, using the **Free** plan in Frankfurt. Confirm the
-   branch is `arena/01a0cc04-wt-pm-lstm-scada-anomaly` and the Blueprint path is
+   branch is `main` and the Blueprint path is
    `render.yaml`. Review any pricing shown by Render before approving.
 4. Approve the deployment. Render builds the image, starts the server, and
    checks `/ready`. The probe returns HTTP 503 while the demo models fit, then
@@ -100,7 +102,7 @@ It never uses `fetch-models --stub`.
    not a memory guarantee for other inputs. The free 512 MiB tier is not suitable.
 2. In **Settings → Build & Deploy**, change **Dockerfile Path** to
    `./Dockerfile.full`. Keep Docker context `.` and the branch
-   `arena/01a0cc04-wt-pm-lstm-scada-anomaly`.
+   `main`.
 3. Clear any **Docker Command** override, so the image's `wt-pm serve --days 6`
    command is used. Keep the health-check path `/ready` and `PORT=10000`.
 4. Set/confirm `WTPM_REQUIRE_ALL_MODELS=1`, `WTPM_WORKERS=1`, and

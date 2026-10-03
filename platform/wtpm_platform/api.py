@@ -20,6 +20,11 @@ import numpy as np
 _STATE: Dict[str, Any] = {"orchestrator": None, "batch": None, "last": None,
                           "fitted": False, "lock": threading.Lock(),
                           "feedback": [], "error": None}
+MAX_REQUEST_BYTES = 8 * 1024 * 1024
+
+
+class RequestTooLarge(ValueError):
+    """Raised when a JSON request exceeds the demo service's bounded body size."""
 
 
 def _json_default(o):
@@ -97,13 +102,23 @@ def _health_snapshot():
 
 
 class Handler(BaseHTTPRequestHandler):
+    def _allowed_origins(self):
+        return {
+            value.strip().rstrip("/")
+            for value in os.environ.get("WTPM_CORS_ORIGINS", "").split(",")
+            if value.strip() and value.strip() != "*"
+        }
+
     def _send(self, code: int, body: Any, ctype: str = "application/json") -> None:
         data = body if isinstance(body, bytes) else json.dumps(
             body, indent=2, default=_json_default).encode()
         self.send_response(code)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(data)))
-        self.send_header("Access-Control-Allow-Origin", "*")
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin and origin in self._allowed_origins():
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Cache-Control", "no-store")
         self.end_headers()
         self.wfile.write(data)
@@ -112,10 +127,19 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
     def do_OPTIONS(self):
+        origin = self.headers.get("Origin", "").rstrip("/")
+        if origin and origin not in self._allowed_origins():
+            self.send_response(403)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
+        if origin:
+            self.send_header("Access-Control-Allow-Origin", origin)
+            self.send_header("Vary", "Origin")
         self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Content-Length", "0")
         self.end_headers()
 
     def do_GET(self):
@@ -168,10 +192,23 @@ class Handler(BaseHTTPRequestHandler):
             self._send(404, {"error": "unknown path"})
 
     def _read_json(self) -> Dict[str, Any]:
-        length = int(self.headers.get("Content-Length", 0) or 0)
+        try:
+            length = int(self.headers.get("Content-Length", 0) or 0)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("invalid Content-Length") from exc
+        if length < 0:
+            raise ValueError("Content-Length cannot be negative")
+        if length > MAX_REQUEST_BYTES:
+            raise RequestTooLarge(f"JSON body exceeds {MAX_REQUEST_BYTES} bytes")
         if not length:
             return {}
-        return json.loads(self.rfile.read(length) or b"{}")
+        raw = self.rfile.read(length)
+        if len(raw) != length:
+            raise ValueError("request body ended before Content-Length bytes were read")
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("JSON request body must be an object")
+        return payload
 
     def do_POST(self):
         path = urlparse(self.path).path
@@ -179,8 +216,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(503, {"error": _STATE.get("error") or "models still fitting, retry shortly"})
         try:
             payload = self._read_json()
+        except RequestTooLarge as exc:
+            return self._send(413, {"error": str(exc)})
         except json.JSONDecodeError:
             return self._send(400, {"error": "invalid JSON"})
+        except ValueError as exc:
+            return self._send(400, {"error": str(exc)})
 
         with _STATE["lock"]:
             orch, ctx = _STATE["orchestrator"], _STATE["ctx"]
@@ -219,16 +260,34 @@ class Handler(BaseHTTPRequestHandler):
                 from wtpm_platform.contracts import OperatingContext
                 from wtpm_platform.scada import emit_scada_tags, ingest_scada_rows
                 rows = payload.get("rows") or payload.get("samples")
-                if not rows:
-                    return self._send(400, {"error": "JSON body needs 'rows': [{plant tags...}]"})
-                live = ingest_scada_rows(
-                    rows,
-                    turbine_id=str(payload.get("turbine_id", "WT-SCADA")),
-                    tag_map=payload.get("map") or {},
-                )
-                live = orch.prepare(live)
-                result = orch.analyse(live, OperatingContext(mode="production", has_labels=False,
-                                                             has_vibration_waveform=True))
+                if not isinstance(rows, list) or not rows:
+                    return self._send(400, {"error": "JSON body needs a non-empty 'rows' array"})
+                if not all(isinstance(row, dict) for row in rows):
+                    return self._send(400, {"error": "each SCADA row must be a JSON object"})
+                tag_map = payload.get("map") or {}
+                if not isinstance(tag_map, dict):
+                    return self._send(400, {"error": "'map' must be an object of plant tag to canonical channel"})
+                try:
+                    live = ingest_scada_rows(
+                        rows,
+                        turbine_id=str(payload.get("turbine_id", "WT-SCADA")),
+                        tag_map=tag_map,
+                    )
+                except (TypeError, ValueError) as exc:
+                    return self._send(400, {"error": str(exc)})
+                if live.meta.get("scada_timestamps_generated"):
+                    return self._send(400, {
+                        "error": "SCADA API rows require a source timestamp; synthetic timestamps are only for offline previews"
+                    })
+                try:
+                    live = orch.prepare(live)
+                    result = orch.analyse(live, OperatingContext(
+                        mode="production", has_labels=False, has_vibration_waveform=True))
+                except (TypeError, ValueError) as exc:
+                    return self._send(422, {"error": f"SCADA data could not be analysed: {exc}"})
+                except Exception:  # noqa: BLE001 - keep HTTP alive; details belong in private logs.
+                    traceback.print_exc()
+                    return self._send(500, {"error": "analysis failed; inspect private service logs"})
                 _STATE["last"] = result
                 tags = emit_scada_tags(result, live.turbine_id)
                 orch.audit.record("scada", {"turbine_id": live.turbine_id,
@@ -428,9 +487,16 @@ function render(d){
   $('alerts').innerHTML=al.length?al.map(a=>`${pill(a.severity==='critical'?'bad':'warn',a.severity)} ${a.message}
      <button onclick="ack('${a.alert_id}')">ack</button>`).join('<br>'):'no active alerts';
   const shap=d.why&&d.why.contributing_features||{};
+  const pg=(d.physics||{}).pg_bnn;
+  const pgText=pg&&pg.status==='ok'
+    ? `<div><b>PG-BNN power:</b> measured ${pg.power_observed_kw} kW · predicted ${pg.power_predicted_kw} kW · measured−predicted ${pg.power_residual_kw} kW</div>
+       <div>Physics expected ${pg.physics_expected_power_kw} kW · measured−physics ${pg.physics_residual_kw} kW · MC epistemic σ ${pg.epistemic_std_kw} kW</div>
+       <div class="sub">Approximate epistemic band ${JSON.stringify(pg.epistemic_band_approx_95_kw)} kW; not a calibrated prediction interval.</div>`
+    : '<div class="sub">PG-BNN is not fitted or available in this deployment profile.</div>';
   $('why').innerHTML=`<div class="sub">${(d.why&&d.why.narrative)||''}</div>
      <pre>${JSON.stringify(shap,null,1)}</pre>
-     physics residual ${((d.physics||{}).power_residual_kw_now)} kW
+     physics residual ${((d.physics||{}).power_residual_kw_now??'—')} kW
+     ${pgText}
      counterfactual: ${JSON.stringify((d.why&&d.why.counterfactual)||{})}`;
   const ht=(d.hermes&&d.hermes.trace)||[];
   $('hermes').textContent=ht.map((s,i)=>`Thought ${i+1}: ${s.thought}\nAction  ${i+1}: ${s.action}\nObserve ${i+1}: ${JSON.stringify(s.observation).slice(0,280)}`).join('\n\n')

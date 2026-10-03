@@ -324,7 +324,7 @@ def cmd_field(args) -> int:
         headers = next(_csv.reader(f))
     report = probe_headers(headers, hot_tag_map())
     print(json.dumps({"csv": path, "probe": report, "map": hot_tag_map()}, indent=2, default=str))
-    return 0 if report["ready"] else 1
+    return 0 if report["ready_for_full_profile"] else 1
 
 
 def cmd_fleet(args) -> int:
@@ -435,16 +435,23 @@ def cmd_scada(args) -> int:
 
     if getattr(args, "probe", ""):
         import csv as _csv
-        with open(args.probe, newline="", encoding="utf-8-sig") as f:
-            headers = next(_csv.reader(f))
         from wtpm_platform.scada import probe_headers
-        extra = load_tag_map(args.map) if args.map else {}
-        report = probe_headers(headers, extra)
+        try:
+            with open(args.probe, newline="", encoding="utf-8-sig") as f:
+                headers = next(_csv.reader(f))
+            extra = load_tag_map(args.map) if args.map else {}
+            report = probe_headers(headers, extra)
+        except (OSError, StopIteration, ValueError, _csv.Error) as exc:
+            print(f"[scada] cannot probe input: {exc}", file=sys.stderr)
+            return 2
         print(json.dumps(report, indent=2))
         print(f"[scada] coverage {report['coverage']:.0%}  "
-              f"mapped {len(report['mapped'])}  unknown {len(report['unknown'])}  "
-              f"missing {report['missing_canonical']}", file=sys.stderr)
-        return 0 if report["ready"] else 1
+              f"m18-ready={report['ready_for_pg_bnn']}  "
+              f"all-12-ready={report['ready_for_full_profile']}  "
+              f"time-mapped={report['time_mapped']}  "
+              f"missing={report['missing_canonical']}  "
+              f"unknown={len(report['unknown'])}", file=sys.stderr)
+        return 0 if report["ready_for_full_profile"] else 1
 
     if args.write_map:
         path = args.write_map
@@ -453,7 +460,19 @@ def cmd_scada(args) -> int:
         print(f"[scada] example tag map -> {path}")
         return 0
 
-    tag_map = load_tag_map(args.map) if args.map else {}
+    if not getattr(args, "fit", True):
+        print(
+            "[scada] --no-fit cannot run: this CLI has no saved-model loader. "
+            "Refusing to score with an unfitted registry.",
+            file=sys.stderr,
+        )
+        return 2
+
+    try:
+        tag_map = load_tag_map(args.map) if args.map else {}
+    except (OSError, ValueError) as exc:
+        print(f"[scada] cannot load tag map: {exc}", file=sys.stderr)
+        return 2
     if args.demo and not args.inp:
         from wtpm_platform.data import canonical_channels
         batch = _make_batch(args.days, seed=args.seed, turbine_id=args.turbine)
@@ -474,15 +493,28 @@ def cmd_scada(args) -> int:
         return 2
 
     print(f"[scada] ingest {args.inp} ...")
-    live = ingest_scada_csv(args.inp, turbine_id=args.turbine, tag_map=tag_map)
+    try:
+        live = ingest_scada_csv(args.inp, turbine_id=args.turbine, tag_map=tag_map)
+    except (OSError, TypeError, ValueError) as exc:
+        print(f"[scada] cannot ingest input: {exc}", file=sys.stderr)
+        return 2
     print(f"[scada] mapped {live.meta.get('scada_mapped_channels')}  "
           f"unmapped={live.meta.get('scada_unmapped_headers')}")
+    if live.meta.get("scada_timestamps_generated"):
+        print("[scada] source timestamp column is required; refusing synthetic timestamps",
+              file=sys.stderr)
+        return 2
 
+    print(
+        "[scada] RESEARCH/SMOKE-TEST ONLY: this command fits on the supplied "
+        "export and then scores that same export; do not use these scores as "
+        "operational alarms."
+    )
     orch = Orchestrator(max_workers=args.workers)
     ctx_fit = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
     ctx = OperatingContext(mode="production", has_labels=False, has_vibration_waveform=True)
     live = orch.prepare(live)
-    print("[scada] fitting on the leading band of this export ...")
+    print("[scada] fitting research adapters on this supplied export ...")
     orch.fit(live, ctx_fit, verbose=False)
     result = orch.analyse(live, ctx)
     tags = emit_scada_tags(result, live.turbine_id)
@@ -521,6 +553,10 @@ def cmd_watch(args) -> int:
     os.makedirs(done, exist_ok=True)
     tag_map = load_tag_map(cfg["map"]) if os.path.isfile(str(cfg.get("map", ""))) else {}
     print(f"[watch] drop={drop} out={out_dir} poll={poll}s config={cfg.get('_path')}")
+    print(
+        "[watch] RESEARCH/SMOKE-TEST ONLY: each CSV is used to fit and score "
+        "its own results. Do not connect this watcher to plant alarms or controls."
+    )
 
     orch = None
     ctx_fit = OperatingContext(mode="research", has_labels=True, has_vibration_waveform=True)
@@ -618,7 +654,7 @@ def main(argv=None) -> int:
     common(sp)
     sp.add_argument("--quiet", action="store_true")
     sp.set_defaults(fn=cmd_agent)
-    sp = sub.add_parser("scada", help="ingest plant SCADA CSV and write WTPM.* tags back")
+    sp = sub.add_parser("scada", help="score a SCADA CSV and export candidate WTPM.* tags (no PLC write)")
     common(sp)
     sp.add_argument("--in", dest="inp", default="", help="historian CSV export")
     sp.add_argument("--turbine", default="WT-SCADA")
@@ -627,9 +663,10 @@ def main(argv=None) -> int:
     sp.add_argument("--demo", action="store_true", help="write a demo CSV then score it")
     sp.add_argument("--write-map", default="", help="write example tag_map.json and exit")
     sp.add_argument("--probe", default="", help="print suggested tag map from a CSV header and exit")
-    sp.add_argument("--no-fit", dest="fit", action="store_false")
+    sp.add_argument("--no-fit", dest="fit", action="store_false",
+                    help="refuse to fit; scoring needs a saved-model loader (not yet implemented)")
     sp.set_defaults(fn=cmd_scada, fit=True)
-    sp = sub.add_parser("watch", help="poll a historian drop folder and write WTPM.* tags")
+    sp = sub.add_parser("watch", help="poll a historian folder and export candidate WTPM.* files (research only)")
     sp.add_argument("--config", default="")
     sp.add_argument("--dir", default="", help="override drop_dir")
     sp.add_argument("--once", action="store_true")

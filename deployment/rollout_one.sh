@@ -44,7 +44,7 @@ git push -q -u origin "$BRANCH"
 
 gh pr create --repo "$API/$REPO" --base main --head "$BRANCH" \
   --title "Advanced concepts on all 25 pages: model-level page for this repository" \
-  --body "Part of the collection-wide page upgrade (\`arena/01a1001d-wt-pm-lstm-scada-anomaly\`).
+  --body "Part of the collection-wide page upgrade, rendered from the reference repository's main-branch catalog.
 
 Every one of the 25 repositories gets the same treatment, rendered from one
 canonical catalog in \`wt-pm-lstm-scada-anomaly/deployment/models.catalog.json\`:

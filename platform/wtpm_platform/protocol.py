@@ -69,9 +69,12 @@ def validate_output(out):
 
 # Some original NumPy research modules use global RNGs. Isolate those calls so
 # repeated inference does not depend on request order or alter caller RNG state.
+from contextlib import contextmanager
 from functools import wraps
 import threading
+
 _numpy_rng_lock = threading.RLock()
+_torch_rng_lock = threading.RLock()
 
 
 def isolated_numpy_rng(fn):
@@ -85,3 +88,22 @@ def isolated_numpy_rng(fn):
             finally:
                 np.random.set_state(state)
     return call
+
+
+@contextmanager
+def isolated_torch_rng(seed: int):
+    """Temporarily seed PyTorch CPU sampling without changing caller RNG state.
+
+    Bayesian adapters use this to draw the same Monte-Carlo weight samples for
+    repeat requests. The lock prevents two such contexts from interleaving the
+    process-global CPU RNG; CUDA RNG streams are never touched. PyTorch remains
+    an optional dependency.
+    """
+    import torch
+
+    with _torch_rng_lock:
+        with torch.random.fork_rng(devices=[]):
+            torch.random.default_generator.manual_seed(
+                int(seed) & 0x7FFFFFFFFFFFFFFF
+            )
+            yield
