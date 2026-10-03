@@ -11,6 +11,14 @@ one-file `gh-pages` branch.
   repos. Model 13 (`wt-pm-lstm-scada-anomaly`) is this repository and was
   already wired.
 
+> **Superseded (2026-10-03).** The pages these patches produce are now generated
+> from a single catalog, with advanced-concept content added to all 25 models:
+> `deployment/models.catalog.json` + `deployment/build_model_pages.py`, rolled out
+> by `deployment/rollout_all.sh` and verified by
+> `deployment/check_ecosystem.py`. The batch-2 patches remain as the historical
+> record of the models 7-25 wiring; running the rollout instead of
+> `apply-all-7to25.sh` reaches the same repositories with the newer pages.
+
 Model numbers are the alphabetical collection numbering used by
 [docs/ecosystem.html](../../docs/ecosystem.html); the platform adapter ids
 (`m01`…`m25`) are a second, task-based numbering — the table below gives both.
@@ -90,6 +98,7 @@ Each script:
 ## After applying batch 2
 
 - Merge the 18 PRs that the script opens.
+
 - Confirm each GitHub Pages site (e.g.
   https://rajaram-2005.github.io/wt-pm-xgboost-tabular-faults/) shows the
   correct adapter id, status, and a working "View on GitHub" button.

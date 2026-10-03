@@ -23,7 +23,8 @@ wt-pm-lstm-scada-anomaly/
 ├── docs/
 │   ├── architecture.md      # model 13 internals
 │   ├── fidelity_ladder.md
-│   └── ecosystem.html       # 25-model fabric (hover graph)
+│   ├── ecosystem.html       # 25-model fabric (hover graph + advanced layers)
+│   └── launch/              # static site: launch, pitch, all-models + 25 model pages
 ├── platform/                # pip package name: wt-pm
 │   ├── wtpm_platform/       # orchestrator, adapters, Hermes, XAI, API
 │   ├── tests/               # 30 platform tests
@@ -31,7 +32,7 @@ wt-pm-lstm-scada-anomaly/
 │       ├── INSPECTION.md    # audit of all 25 repos (before integration)
 │       ├── ARCHITECTURE_REPORT.md
 │       ├── MODELS.md        # adapter id, I/O, Hermes/XAI role
-│       └── sibling-readmes/ # paste-ready READMEs for the other 24 GitHub repos
+│       └── sibling-readmes/ # earlier paste-ready READMEs (superseded by the catalog generator)
 ├── pyproject.toml           # project: wt-pm-lstm-scada-anomaly  →  wtpm
 └── platform/pyproject.toml  # project: wt-pm                     →  wt-pm
 ```
@@ -125,7 +126,7 @@ Until PyPI publish:
 - Vibration waveforms are **surrogates** (`vibration_is_surrogate=True`).
 - RUL targets are **proxies** (time-to-fault-onset).
 - m02, m06, m08 are **partial** upstream; m24’s full MobileNet path is out of scope (no image data).
-- This session cannot push descriptions onto the other 24 GitHub repos (no write token). Paste from `platform/docs/sibling-readmes/`.
+- The 25 repository pages are **generated from one catalog** (`deployment/models.catalog.json`); regeneration and verification are `deployment/build_model_pages.py` and `deployment/check_ecosystem.py`. Rolling the pages out to the 24 sibling repositories needs a token with write access to them — `deployment/rollout_all.sh --dry-run` first.
 
 ## Documents
 
@@ -134,7 +135,9 @@ Until PyPI publish:
 | [README.md](README.md) | model 13 quick start |
 | [docs/architecture.md](docs/architecture.md) | model 13 internals |
 | [docs/fidelity_ladder.md](docs/fidelity_ladder.md) | what a metric may claim |
-| [docs/ecosystem.html](docs/ecosystem.html) | 25-model fabric |
+| [docs/ecosystem.html](docs/ecosystem.html) | 25-model fabric + advanced layers |
+| [deployment/models.catalog.json](deployment/models.catalog.json) | the single source of truth for all 25 pages |
+| [docs/launch/all-models.html](docs/launch/all-models.html) | all 25 model pages, side by side |
 | [platform/docs/INSPECTION.md](platform/docs/INSPECTION.md) | pre-integration audit |
 | [platform/docs/ARCHITECTURE_REPORT.md](platform/docs/ARCHITECTURE_REPORT.md) | repo → adapter → I/O → status |
 | [platform/docs/MODELS.md](platform/docs/MODELS.md) | one row per model |

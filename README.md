@@ -13,6 +13,24 @@ on wind-turbine SCADA data — **and the host of the unified 25-model platform**
 **GitHub architecture (layers, mermaid, 25 adapters, commands):**
 [ARCHITECTURE.md](ARCHITECTURE.md) · [ecosystem](docs/ecosystem.html) · [platform report](platform/docs/ARCHITECTURE_REPORT.md)
 
+### Where this repository sits in the collection
+
+The 25 repositories are numbered **alphabetically 01–25** — that is the number
+printed on each repository's page — and each one also has a **task-based
+platform adapter id**. This repository is **model 13 of 25** and adapter
+**`m05-lstm-scada-anomaly`**. Both numbers appear on every page so the
+ecosystem graph and the platform registry can be read against each other.
+
+- **Single source of truth:** [`deployment/models.catalog.json`](deployment/models.catalog.json) —
+  number, adapter, status, contract, advanced concepts, platform-layer
+  participation and the 31 functional edges for all 25 models.
+- **Advanced concepts index:** [all 25 model pages](https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/all-models.html)
+  (fusion, calibrated uncertainty, drift and data trust, explainability,
+  physics constraints, the safety gate, the evaluation protocol, the Hermes
+  agent) with 96 indexed concepts.
+- **Regenerate / verify:** `python deployment/build_model_pages.py --out build/pages`
+  and `python deployment/check_ecosystem.py --dir build/pages --strict`.
+
 The WT-PM ecosystem is a 25-model wind-turbine predictive-maintenance research
 collection spanning vibration intelligence, SCADA analytics, anomaly detection,
 fault classification, RUL prognostics, physics-guided learning, digital twins,

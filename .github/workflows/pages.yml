@@ -23,6 +23,8 @@ jobs:
           cp docs/ecosystem.html _site/ecosystem.html
           touch _site/.nojekyll
           python deployment/check_pages.py _site
+          # every one of the 25 model pages must be present and agree with the catalog
+          python deployment/check_ecosystem.py --site _site --strict
       - uses: actions/upload-artifact@v4
         with:
           name: launch-site
@@ -32,7 +34,7 @@ jobs:
           (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
           (github.event_name == 'workflow_dispatch' &&
            (github.ref == 'refs/heads/main' ||
-            github.ref == 'refs/heads/arena/01a0cc04-wt-pm-lstm-scada-anomaly'))
+            github.ref == 'refs/heads/arena/01a1001d-wt-pm-lstm-scada-anomaly'))
         with:
           path: _site
 
@@ -42,7 +44,7 @@ jobs:
       (github.ref == 'refs/heads/main' && github.event_name == 'push') ||
       (github.event_name == 'workflow_dispatch' &&
        (github.ref == 'refs/heads/main' ||
-        github.ref == 'refs/heads/arena/01a0cc04-wt-pm-lstm-scada-anomaly'))
+        github.ref == 'refs/heads/arena/01a1001d-wt-pm-lstm-scada-anomaly'))
     runs-on: ubuntu-latest
     concurrency:
       group: github-pages-deployment

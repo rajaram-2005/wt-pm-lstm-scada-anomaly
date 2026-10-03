@@ -22,3 +22,8 @@ jobs:
         run: python -m wtpm_platform.cli fetch-models --stub --dir external
       - name: platform tests
         run: python -m pytest platform/tests --tb=short
+      - name: model catalog, pages and ecosystem consistency
+        run: |
+          python deployment/build_model_pages.py --check
+          python deployment/build_model_pages.py --out /tmp/wtpm-pages --site /tmp/wtpm-site
+          python deployment/check_ecosystem.py --dir /tmp/wtpm-pages --site /tmp/wtpm-site --strict

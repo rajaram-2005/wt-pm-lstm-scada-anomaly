@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WT-PM - all 25 model pages</title>
+<style>
+:root{
+  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
+  --teal:#2ee6c8; --amber:#f0b429;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
+a{color:var(--teal);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
+header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
+.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
+.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
+.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
+.pill.adapter{color:var(--teal)}
+.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
+h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
+.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
+h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:22px 0 6px}
+p{color:#b7d0cc}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;width:210px}
+td{color:#c9ddd9}
+code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
+pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
+.card h3{margin-top:0;color:var(--teal)}
+ul{color:#b7d0cc}
+li{margin:5px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
+.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
+.fleet a:hover{border-color:var(--teal);text-decoration:none}
+.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
+.fleet a span{color:var(--muted);font-size:11.5px}
+.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
+.edges li b{color:var(--ink)}
+.limits li{color:#e0b7b7}
+footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
+.note{color:var(--muted);font-size:13.5px}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
+.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
+.btn.ghost{background:transparent;color:var(--ink)}
+</style></head><body><div class="wrap">
+<header><div class="crumbs"><a href="index.html">WT-PM</a><span>static site</span><span class="pill">25 MODEL PAGES</span></div>
+<h1>All 25 model pages</h1>
+<p class="lede">One catalog, one contract, twenty-five pages. Each card links to a repository page that states the same numbering, the same record format and the same honest limits.</p>
+</header>
+<h2 style="border-color:#f2a15455">Edge AI <span class="note">(4 models)</span></h2>
+<p class="note">Models that run at or near the turbine: compressing telemetry for backhaul, extracting features on low-power hardware, and tripping safety relays without waiting for the cloud.</p>
+<div class="grid fleet">
+<a href="model-02-aerozip-autoencoder-compressor.html"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; integrated</span></a>
+<a href="model-17-quantized-mobilenet-edge.html"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; integrated (INT8 recipe applied to the platform's edge net)</span></a>
+<a href="model-19-snn-event-vibration.html"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; integrated (surrogate events)</span></a>
+<a href="model-22-tinyml-esp32-safety-relay.html"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; integrated</span></a>
+</div>
+<h2 style="border-color:#4cc9f055">SCADA Anomaly Detection <span class="note">(7 models)</span></h2>
+<p class="note">Seven detectors over the shared 12-channel, 10-minute SCADA contract. Different inductive biases - sequences, reconstruction, boundaries, forests, attention - one output record, so downstream layers never care which one fired.</p>
+<div class="grid fleet">
+<a href="model-06-deep-svdd-boundary.html"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; integrated (6-layer bias-free encoder; platform supplies its own training loop)</span></a>
+<a href="model-09-gru-scada-telemetry.html"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; integrated</span></a>
+<a href="model-11-informer-long-sequence.html"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; partial (placeholder attention)</span></a>
+<a href="model-12-isolation-forest-telemetry.html"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; integrated (universal fallback)</span></a>
+<a href="model-13-lstm-scada-anomaly.html"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; integrated - reference implementation and platform host</span></a>
+<a href="model-21-tcn-power-curve.html"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; integrated</span></a>
+<a href="model-23-vae-reconstruction-loss.html"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; integrated (uses the repo's vae_loss)</span></a>
+</div>
+<h2 style="border-color:#f25c7855">Component Fault Classification <span class="note">(6 models)</span></h2>
+<p class="note">Turning 'something is wrong' into 'this component, this failure mode'. Consumes anomaly records and edge features; produces the labels that prognostics and XAI operate on.</p>
+<div class="grid fleet">
+<a href="model-01-1d-cnn-bearing-vibration.html"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; integrated (surrogate waveforms)</span></a>
+<a href="model-03-contrastive-ssl-vibration.html"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; partial (SimCLR encoder; platform adapter supplies full NT-Xent loss)</span></a>
+<a href="model-08-gnn-turbines-cascade.html"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; integrated (wake graph from simulator)</span></a>
+<a href="model-18-random-forest-telemetry.html"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; integrated</span></a>
+<a href="model-20-svm-rbf-generator-stator.html"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; integrated (electrical specialist)</span></a>
+<a href="model-25-xgboost-tabular-faults.html"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; integrated (primary tabular voter)</span></a>
+</div>
+<h2 style="border-color:#9d7bf555">RUL Prognostics <span class="note">(5 models)</span></h2>
+<p class="note">Remaining-useful-life estimation: discrete degradation states, spatiotemporal wear tracking, learned feature hierarchies, probabilistic filtering - anchored by a deliberately simple MLP baseline.</p>
+<div class="grid fleet">
+<a href="model-04-convlstm-wear-prognostics.html"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)</span></a>
+<a href="model-05-dbn-feature-extraction.html"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; integrated (platform supplies its own CD-1 loop; the repo ships one too)</span></a>
+<a href="model-10-hmm-degradation-states.html"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; integrated (severity-ordered states)</span></a>
+<a href="model-14-mlp-rul-regression.html"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; integrated (proxy target)</span></a>
+<a href="model-15-particle-filter-rul.html"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; complete</span></a>
+</div>
+<h2 style="border-color:#52d68a55">Physics-Informed &amp; Explainable <span class="note">(3 models)</span></h2>
+<p class="note">The layer that keeps the learning honest: physics surrogates supply residuals and constraints, and SHAP/LIME turn alerts into root-cause explanations.</p>
+<div class="grid fleet">
+<a href="model-07-digital-twin-surrogate.html"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; integrated (physics-proxy targets)</span></a>
+<a href="model-16-pg-bnn-wind-turbine.html"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; integrated (BNN assembled from the repo's blocks)</span></a>
+<a href="model-24-xai-shap-interpretable.html"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; integrated</span></a>
+</div>
+<h2>Platform layers</h2>
+<p class="note">Every model page names the layers it participates in. The layers themselves are defined once, in the catalog.</p>
+<table>
+<tr><th>Fusion engine</th><td>Combines the votes of the 25 models into one answer.<br><span class="note">Weighted, confidence-weighted, max and median rules; inverse-variance weighting when a model reports uncertainty; coverage-aware probability fusion so a voter that abstains on a class does not dilute it.</span><br><span class="note">models: 03, 04, 06, 09, 10, 11, 12, 13, 16, 18, 20, 21, 22, 23, 25</span></td></tr>
+<tr><th>Calibrated uncertainty</th><td>Every alert carries an interval or a confidence, not just a number.<br><span class="note">MC-sampled Bayesian weights (m18), latent-posterior spread (m22), a particle posterior (m16) and the LSTM detector's own interval; expected calibration error is computed at evaluation time.</span><br><span class="note">models: 13, 16, 15, 22</span></td></tr>
+<tr><th>Drift and data trust</th><td>Detects that the world, or the sensor, has moved.<br><span class="note">Rolling distribution comparison between training and live features (evaluation.drift_report) plus an unsupervised SensorQualityMonitor for freeze, spike, stuck-at and out-of-range conditions.</span><br><span class="note">models: 02, 03, 05, 06, 13</span></td></tr>
+<tr><th>Explainability</th><td>Turns an alert into a root cause an engineer can argue with.<br><span class="note">m21 SHAP TreeExplainer attributions, contrastive healthy-band z-scores, per-feature counterfactuals, and a Hermes narrative rendered only from real outputs.</span><br><span class="note">models: 24, 25, 18, 01</span></td></tr>
+<tr><th>Physics constraints</th><td>Keeps the learning inside what the machine can actually do.<br><span class="note">A digital-twin surrogate (m19) supplies residuals and what-if counterfactuals; the PG-BNN (m18) embeds P = tau * omega as a soft penalty and returns physics-consistent uncertainty.</span><br><span class="note">models: 07, 16</span></td></tr>
+<tr><th>Safety gate</th><td>The one path that is allowed to say STOP.<br><span class="note">A depth-5 decision tree exported to model.h for an ESP32 (m25) plus a mirrored in-process SafetyManager evaluating the same hard limits, with hysteresis and cooldown in the alert manager.</span><br><span class="note">models: 22</span></td></tr>
+<tr><th>Evaluation protocol</th><td>Makes every number in the collection comparable.<br><span class="note">Leak-free window masks, past-only holdout state, ROC-AUC / PR-AUC / calibration / RUL metrics, an experiment tracker, and the fidelity ladder that labels every claim rung 1.</span><br><span class="note">models: 13, 01, 03, 05, 15</span></td></tr>
+<tr><th>Hermes agent</th><td>A Thought -&gt; Action -&gt; Observation loop that decides which model to ask next.<br><span class="note">Eight tools: sensor_quality, anomaly, diagnose, explain, rul, safety, what_if, finish. Observations are adapter outputs; the agent never invents a measurement.</span><br><span class="note">models: 13, 24, 22, 07, 16, 15, 09, 25</span></td></tr>
+</table>
+<h2>All 25 pages on this site</h2>
+<p class="note">The same pages that are published as each repository's landing page, rendered here from the same catalog so they can be read side by side.</p>
+<table>
+<tr><th><a href="model-01-1d-cnn-bearing-vibration.html">01 &middot; 1D-CNN Bearing Vibration</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration">wt-pm-1d-cnn-bearing-vibration</a><br><span class="note"><code>m01-1dcnn-bearing</code> &middot; integrated (surrogate waveforms)</span></td></tr>
+<tr><th><a href="model-02-aerozip-autoencoder-compressor.html">02 &middot; AeroZip Autoencoder Compressor</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">wt-pm-aerozip-autoencoder-compressor</a><br><span class="note"><code>m23-aerozip</code> &middot; integrated</span></td></tr>
+<tr><th><a href="model-03-contrastive-ssl-vibration.html">03 &middot; Contrastive SSL Vibration</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">wt-pm-contrastive-ssl-vibration</a><br><span class="note"><code>m08-contrastive-ssl</code> &middot; partial (SimCLR encoder; platform adapter supplies full NT-Xent loss)</span></td></tr>
+<tr><th><a href="model-04-convlstm-wear-prognostics.html">04 &middot; ConvLSTM Wear Prognostics</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">wt-pm-convlstm-wear-prognostics</a><br><span class="note"><code>m02-convlstm-wear</code> &middot; partial (repo expects 64x64 wear maps; platform builds channel-recurrence images)</span></td></tr>
+<tr><th><a href="model-05-dbn-feature-extraction.html">05 &middot; DBN Feature Extraction</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">wt-pm-dbn-feature-extraction</a><br><span class="note"><code>m09-dbn-features</code> &middot; integrated (platform supplies its own CD-1 loop; the repo ships one too)</span></td></tr>
+<tr><th><a href="model-06-deep-svdd-boundary.html">06 &middot; Deep SVDD Boundary</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">wt-pm-deep-svdd-boundary</a><br><span class="note"><code>m13-deep-svdd</code> &middot; integrated (6-layer bias-free encoder; platform supplies its own training loop)</span></td></tr>
+<tr><th><a href="model-07-digital-twin-surrogate.html">07 &middot; Digital Twin Surrogate</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate">wt-pm-digital-twin-surrogate</a><br><span class="note"><code>m19-digital-twin</code> &middot; integrated (physics-proxy targets)</span></td></tr>
+<tr><th><a href="model-08-gnn-turbines-cascade.html">08 &middot; GNN Turbine Cascade</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade">wt-pm-gnn-turbines-cascade</a><br><span class="note"><code>m20-gnn-cascade</code> &middot; integrated (wake graph from simulator)</span></td></tr>
+<tr><th><a href="model-09-gru-scada-telemetry.html">09 &middot; GRU SCADA Telemetry</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry">wt-pm-gru-scada-telemetry</a><br><span class="note"><code>m04-gru-scada-telemetry</code> &middot; integrated</span></td></tr>
+<tr><th><a href="model-10-hmm-degradation-states.html">10 &middot; HMM Degradation States</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">wt-pm-hmm-degradation-states</a><br><span class="note"><code>m15-hmm-degradation</code> &middot; integrated (severity-ordered states)</span></td></tr>
+<tr><th><a href="model-11-informer-long-sequence.html">11 &middot; Informer Long Sequence</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence">wt-pm-informer-long-sequence</a><br><span class="note"><code>m06-informer-forecast</code> &middot; partial (placeholder attention)</span></td></tr>
+<tr><th><a href="model-12-isolation-forest-telemetry.html">12 &middot; Isolation Forest Telemetry</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry">wt-pm-isolation-forest-telemetry</a><br><span class="note"><code>m14-isolation-forest</code> &middot; integrated (universal fallback)</span></td></tr>
+<tr><th><a href="model-13-lstm-scada-anomaly.html">13 &middot; LSTM SCADA Anomaly (reference contract hub)</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">wt-pm-lstm-scada-anomaly</a><br><span class="note"><code>m05-lstm-scada-anomaly</code> &middot; integrated - reference implementation and platform host</span></td></tr>
+<tr><th><a href="model-14-mlp-rul-regression.html">14 &middot; MLP RUL Regression</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">wt-pm-mlp-rul-regression</a><br><span class="note"><code>m17-mlp-rul</code> &middot; integrated (proxy target)</span></td></tr>
+<tr><th><a href="model-15-particle-filter-rul.html">15 &middot; Particle Filter RUL</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">wt-pm-particle-filter-rul</a><br><span class="note"><code>m16-particle-filter-rul</code> &middot; complete</span></td></tr>
+<tr><th><a href="model-16-pg-bnn-wind-turbine.html">16 &middot; PG-BNN Physics-Guided Bayesian</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine">wt-pm-pg-bnn-wind-turbine</a><br><span class="note"><code>m18-pg-bnn</code> &middot; integrated (BNN assembled from the repo's blocks)</span></td></tr>
+<tr><th><a href="model-17-quantized-mobilenet-edge.html">17 &middot; Quantized MobileNet Edge</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge">wt-pm-quantized-mobilenet-edge</a><br><span class="note"><code>m24-quantized-edge</code> &middot; integrated (INT8 recipe applied to the platform's edge net)</span></td></tr>
+<tr><th><a href="model-18-random-forest-telemetry.html">18 &middot; Random Forest Telemetry</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry">wt-pm-random-forest-telemetry</a><br><span class="note"><code>m10-random-forest</code> &middot; integrated</span></td></tr>
+<tr><th><a href="model-19-snn-event-vibration.html">19 &middot; SNN Event Vibration</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">wt-pm-snn-event-vibration</a><br><span class="note"><code>m07-snn-vibration</code> &middot; integrated (surrogate events)</span></td></tr>
+<tr><th><a href="model-20-svm-rbf-generator-stator.html">20 &middot; SVM-RBF Generator Stator</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">wt-pm-svm-rbf-generator-stator</a><br><span class="note"><code>m12-svm-generator</code> &middot; integrated (electrical specialist)</span></td></tr>
+<tr><th><a href="model-21-tcn-power-curve.html">21 &middot; TCN Power Curve</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve">wt-pm-tcn-power-curve</a><br><span class="note"><code>m03-tcn-power-curve</code> &middot; integrated</span></td></tr>
+<tr><th><a href="model-22-tinyml-esp32-safety-relay.html">22 &middot; TinyML ESP32 Safety Relay</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">wt-pm-tinyml-esp32-safety-relay</a><br><span class="note"><code>m25-tinyml-safety</code> &middot; integrated</span></td></tr>
+<tr><th><a href="model-23-vae-reconstruction-loss.html">23 &middot; VAE Reconstruction Loss</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss">wt-pm-vae-reconstruction-loss</a><br><span class="note"><code>m22-vae-reconstruction</code> &middot; integrated (uses the repo's vae_loss)</span></td></tr>
+<tr><th><a href="model-24-xai-shap-interpretable.html">24 &middot; XAI SHAP Interpretable</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable">wt-pm-xai-shap-interpretable</a><br><span class="note"><code>m21-xai-shap</code> &middot; integrated</span></td></tr>
+<tr><th><a href="model-25-xgboost-tabular-faults.html">25 &middot; XGBoost Tabular Faults</a></th><td><a href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">wt-pm-xgboost-tabular-faults</a><br><span class="note"><code>m11-xgboost-tabular</code> &middot; integrated (primary tabular voter)</span></td></tr>
+</table>
+<h2>Concept index</h2>
+<p class="note">Every advanced concept named anywhere in the collection, and the pages that explain it.</p>
+<table>
+<tr><th>Accuracy-size trade-offs</th><td><a href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge">17</a></td></tr>
+<tr><th>Availability guarantees</th><td><a href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry">12</a></td></tr>
+<tr><th>Bagging</th><td><a href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry">18</a></td></tr>
+<tr><th>Bare-metal constraints</th><td><a href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">22</a></td></tr>
+<tr><th>Baselines</th><td><a href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">14</a></td></tr>
+<tr><th>Baum-Welch</th><td><a href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">10</a></td></tr>
+<tr><th>Bayesian neural networks</th><td><a href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine">16</a></td></tr>
+<tr><th>Bottleneck autoencoders</th><td><a href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">02</a></td></tr>
+<tr><th>Calibration ranges</th><td><a href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge">17</a></td></tr>
+<tr><th>Class imbalance</th><td><a href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">20</a></td></tr>
+<tr><th>Contamination</th><td><a href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry">12</a></td></tr>
+<tr><th>Contrastive divergence</th><td><a href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">05</a></td></tr>
+<tr><th>Contrastive embeddings</th><td><a href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">03</a></td></tr>
+<tr><th>Contrastive explanations</th><td><a href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable">24</a></td></tr>
+<tr><th>ConvLSTM</th><td><a href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">04</a></td></tr>
+<tr><th>Counterfactuals</th><td><a href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate">07</a>, <a href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable">24</a></td></tr>
+<tr><th>Data contracts</th><td><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">13</a></td></tr>
+<tr><th>Dilated causal convolutions</th><td><a href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve">21</a></td></tr>
+<tr><th>Distilling</th><td><a href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence">11</a></td></tr>
+<tr><th>Drift detection</th><td><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">13</a></td></tr>
+<tr><th>ELBO</th><td><a href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss">23</a></td></tr>
+<tr><th>Edge inference</th><td><a href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry">09</a></td></tr>
+<tr><th>Energy-based models</th><td><a href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">05</a></td></tr>
+<tr><th>Ensemble variance</th><td><a href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry">12</a></td></tr>
+<tr><th>Ensembles</th><td><a href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry">18</a></td></tr>
+<tr><th>Epistemic uncertainty</th><td><a href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine">16</a></td></tr>
+<tr><th>Event encoding</th><td><a href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">19</a></td></tr>
+<tr><th>Feature hierarchies</th><td><a href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">05</a></td></tr>
+<tr><th>Feature importance</th><td><a href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry">18</a></td></tr>
+<tr><th>Fleet-level risk</th><td><a href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade">08</a></td></tr>
+<tr><th>Forecast residuals</th><td><a href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry">09</a></td></tr>
+<tr><th>Forward-backward</th><td><a href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">10</a></td></tr>
+<tr><th>Gated recurrence</th><td><a href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry">09</a></td></tr>
+<tr><th>Graceful degradation</th><td><a href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">04</a></td></tr>
+<tr><th>Gradient boosting</th><td><a href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">25</a></td></tr>
+<tr><th>Graph neural networks</th><td><a href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade">08</a></td></tr>
+<tr><th>Greedy layerwise pretraining</th><td><a href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction">05</a></td></tr>
+<tr><th>Hidden Markov models</th><td><a href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">10</a></td></tr>
+<tr><th>Hypersphere collapse</th><td><a href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">06</a></td></tr>
+<tr><th>Isolation by partitioning</th><td><a href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry">12</a></td></tr>
+<tr><th>Kernel methods</th><td><a href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">20</a></td></tr>
+<tr><th>Label switching</th><td><a href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states">10</a></td></tr>
+<tr><th>Latent features</th><td><a href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">02</a></td></tr>
+<tr><th>Leak-free evaluation</th><td><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">13</a></td></tr>
+<tr><th>Linear probing</th><td><a href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">03</a></td></tr>
+<tr><th>Long-horizon forecasting</th><td><a href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence">11</a></td></tr>
+<tr><th>Message passing</th><td><a href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade">08</a></td></tr>
+<tr><th>Model comparison</th><td><a href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">14</a></td></tr>
+<tr><th>Model distillation</th><td><a href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">25</a></td></tr>
+<tr><th>NT-Xent</th><td><a href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">03</a></td></tr>
+<tr><th>Neuromorphic inference</th><td><a href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">19</a></td></tr>
+<tr><th>One-class learning</th><td><a href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">06</a></td></tr>
+<tr><th>Operating envelopes</th><td><a href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate">07</a></td></tr>
+<tr><th>Particle filters</th><td><a href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">15</a></td></tr>
+<tr><th>Physics residuals</th><td><a href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate">07</a></td></tr>
+<tr><th>Physics-informed loss</th><td><a href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine">16</a></td></tr>
+<tr><th>Platt scaling</th><td><a href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">20</a></td></tr>
+<tr><th>Post-training quantization</th><td><a href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge">17</a></td></tr>
+<tr><th>Posterior collapse</th><td><a href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss">23</a></td></tr>
+<tr><th>Posterior intervals</th><td><a href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">15</a></td></tr>
+<tr><th>Power curves</th><td><a href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve">21</a></td></tr>
+<tr><th>Probability calibration</th><td><a href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry">18</a></td></tr>
+<tr><th>Proxy targets</th><td><a href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">14</a></td></tr>
+<tr><th>RUL uncertainty</th><td><a href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">04</a></td></tr>
+<tr><th>Rate-distortion</th><td><a href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">02</a></td></tr>
+<tr><th>Receptive fields</th><td><a href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration">01</a>, <a href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve">21</a></td></tr>
+<tr><th>Reconstruction error</th><td><a href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor">02</a>, <a href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss">23</a></td></tr>
+<tr><th>Regression metrics</th><td><a href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression">14</a></td></tr>
+<tr><th>Representation learning</th><td><a href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">06</a></td></tr>
+<tr><th>Resampling and degeneracy</th><td><a href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">15</a></td></tr>
+<tr><th>Residual detection</th><td><a href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence">11</a></td></tr>
+<tr><th>Residual monitoring</th><td><a href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve">21</a></td></tr>
+<tr><th>Robust calibration</th><td><a href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary">06</a></td></tr>
+<tr><th>Safety vets voting</th><td><a href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">22</a></td></tr>
+<tr><th>Score standardisation</th><td><a href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry">09</a></td></tr>
+<tr><th>Second-order optimisation</th><td><a href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">25</a></td></tr>
+<tr><th>Self-supervised learning</th><td><a href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration">03</a></td></tr>
+<tr><th>Sequence autoencoders</th><td><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">13</a></td></tr>
+<tr><th>Sequential Monte Carlo</th><td><a href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul">15</a></td></tr>
+<tr><th>Shapley values</th><td><a href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable">24</a></td></tr>
+<tr><th>Softmax calibration</th><td><a href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration">01</a></td></tr>
+<tr><th>Software-in-the-loop</th><td><a href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">22</a></td></tr>
+<tr><th>Sparse attention</th><td><a href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence">11</a></td></tr>
+<tr><th>Spatiotemporal fields</th><td><a href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics">04</a></td></tr>
+<tr><th>Spiking neural networks</th><td><a href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">19</a></td></tr>
+<tr><th>Support vector machines</th><td><a href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator">20</a></td></tr>
+<tr><th>Surrogate data</th><td><a href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration">01</a></td></tr>
+<tr><th>Surrogate gradients</th><td><a href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration">19</a></td></tr>
+<tr><th>Surrogate modelling</th><td><a href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate">07</a></td></tr>
+<tr><th>TFLite</th><td><a href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge">17</a></td></tr>
+<tr><th>TinyML</th><td><a href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay">22</a></td></tr>
+<tr><th>Transfer learning</th><td><a href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration">01</a></td></tr>
+<tr><th>TreeSHAP</th><td><a href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable">24</a>, <a href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults">25</a></td></tr>
+<tr><th>Uncertainty</th><td><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">13</a></td></tr>
+<tr><th>Variational inference</th><td><a href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine">16</a>, <a href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss">23</a></td></tr>
+<tr><th>Wake coupling</th><td><a href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade">08</a></td></tr>
+</table>
+<footer><p>Generated from <code>deployment/models.catalog.json</code> in <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">wt-pm-lstm-scada-anomaly</a>. Research demo - not field-validated turbine control.</p></footer>
+</div></body></html>

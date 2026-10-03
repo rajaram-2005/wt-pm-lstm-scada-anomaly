@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<!-- Generated from deployment/models.catalog.json - edit the catalog, not this file. -->
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1D-CNN Bearing Vibration - WT-PM model 01 of 25</title>
+<meta name="description" content="A three-block 1D convolutional network that classifies gearbox bearing condition directly from a raw vibration window, with no hand-built spectral fea">
+<style>
+:root{
+  --bg:#05080c; --panel:#0b1216; --ink:#e8f4f2; --muted:#8aa4a8; --line:rgba(46,230,200,.18);
+  --teal:#2ee6c8; --amber:#f0b429;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font-family:"Segoe UI",system-ui,-apple-system,sans-serif;line-height:1.6}
+a{color:var(--teal);text-decoration:none}
+a:hover{text-decoration:underline}
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px 64px}
+header{border-bottom:1px solid var(--line);padding:26px 0 22px;margin-bottom:34px}
+.crumbs{display:flex;flex-wrap:wrap;gap:10px;align-items:center;font-size:12.5px;color:var(--muted)}
+.pill{border:1px solid var(--line);border-radius:999px;padding:3px 11px;font-weight:700;letter-spacing:.06em}
+.pill.num{background:var(--teal);color:#04231e;border-color:var(--teal)}
+.pill.adapter{color:var(--teal)}
+.pill.status{color:var(--amber);border-color:rgba(240,180,41,.4)}
+h1{font-size:clamp(28px,4vw,42px);margin:18px 0 10px;line-height:1.12}
+.lede{color:#c9ddd9;font-size:17px;max-width:52rem}
+h2{font-size:21px;margin:44px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+h3{font-size:16px;margin:22px 0 6px}
+p{color:#b7d0cc}
+table{width:100%;border-collapse:collapse;margin:14px 0;font-size:14.5px}
+th,td{text-align:left;vertical-align:top;padding:9px 12px;border-bottom:1px solid var(--line)}
+th{color:var(--muted);font-weight:600;width:210px}
+td{color:#c9ddd9}
+code{background:#101a20;border:1px solid var(--line);border-radius:6px;padding:1px 6px;color:#7dd3fc;font-size:13.5px}
+pre{background:#0b1216;border:1px solid var(--line);border-radius:12px;padding:16px;overflow:auto;color:#cde}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px 18px;margin:12px 0;background:var(--panel)}
+.card h3{margin-top:0;color:var(--teal)}
+ul{color:#b7d0cc}
+li{margin:5px 0}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:10px;margin:14px 0}
+.fleet a{display:block;border:1px solid var(--line);border-radius:11px;padding:10px 12px;font-size:13.5px;color:#c9ddd9}
+.fleet a:hover{border-color:var(--teal);text-decoration:none}
+.fleet a b{display:block;color:var(--ink);font-size:14px;margin-bottom:2px}
+.fleet a span{color:var(--muted);font-size:11.5px}
+.fleet a.here{outline:2px solid var(--teal);outline-offset:-2px}
+.edges li b{color:var(--ink)}
+.limits li{color:#e0b7b7}
+footer{margin-top:56px;border-top:1px solid var(--line);padding-top:18px;color:var(--muted);font-size:13px}
+.note{color:var(--muted);font-size:13.5px}
+.cta{display:flex;flex-wrap:wrap;gap:10px;margin:18px 0 6px}
+.btn{border:1px solid var(--teal);border-radius:999px;padding:9px 16px;font-weight:650;color:#04231e;background:var(--teal)}
+.btn.ghost{background:transparent;color:var(--ink)}
+</style></head><body><div class="wrap">
+<header><div class="crumbs">
+<a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">WT-PM</a>
+<span>collection of 25 models</span>
+<span class="pill num">MODEL 01 / 25</span>
+<span class="pill adapter">m01-1dcnn-bearing</span>
+<span class="pill status">integrated (surrogate waveforms)</span>
+<span class="pill" style="color:#f25c78;border-color:#f25c7855">Component Fault Classification</span>
+</div>
+<h1>1D-CNN Bearing Vibration</h1>
+<p class="lede">A three-block 1D convolutional network that classifies gearbox bearing condition directly from a raw vibration window, with no hand-built spectral features. It is the highest-resolution view of the drivetrain in the collection: the only model that would consume a real high-frequency DAQ stream unchanged if one were wired to the simulator.</p>
+<div class="cta">
+<a class="btn" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration">View on GitHub</a>
+<a class="btn ghost" href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">25-model ecosystem graph</a>
+<a class="btn ghost" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/ARCHITECTURE.md">Platform architecture</a>
+</div>
+</header>
+<p class="note">This page is generated from <code>deployment/models.catalog.json</code> in the reference repository, together with the other 24 model pages, so all 25 agree on numbering, contract and status.</p>
+<h2>Model</h2>
+<ul>
+<li><code>build_1d_cnn(input_shape, num_classes)</code> - compiled Keras Sequential</li>
+<li><code>python model.py</code> - prints the layer summary</li>
+</ul>
+<table>
+<tr><th>Feature extractor</th><td>3 x (Conv1D kernel 3 + ReLU -&gt; MaxPooling1D 2), 32 -&gt; 64 -&gt; 128 filters; learns its own band-pass banks instead of an FFT</td></tr>
+<tr><th>Classifier head</th><td>Flatten -&gt; Dense(128) + ReLU -&gt; Dropout(0.5) -&gt; Dense(num_classes) + softmax</td></tr>
+<tr><th>Compile</th><td>Adam, categorical_crossentropy; 2,096,068 parameters for (1024, 1) input and 4 classes</td></tr>
+</table>
+<h2>Advanced concepts</h2>
+<p class="note">The ideas this model actually leans on, each stated with its failure mode.</p>
+<div class="card">
+<h3>Receptive field arithmetic</h3>
+<p>Three kernel-3 convolutions separated by max-pool 2 give a receptive field of 1 + 2 + 4 + ... samples of context per output activation. Widening the kernel or adding a dilation is the only way to see a full shaft revolution without a deeper stack - the reason the upstream model stops at 1024 samples.</p>
+</div>
+<div class="card">
+<h3>Convolution beats handcrafted spectra</h3>
+<p>Classical bearing diagnostics hand you envelope spectra and defect frequencies (BPFO/BPFI). A 1D-CNN learns its own filter bank end to end, which is why it transfers across machines - and why it needs thousands of labelled windows to beat the handcrafted baseline at all.</p>
+</div>
+<div class="card">
+<h3>Surrogate-data honesty</h3>
+<p>The platform has 10-minute RMS SCADA, not 20 kHz DAQ. Waveforms are synthesised and carry vibration_is_surrogate=True, so every metric this model reports is a property of the pipeline, not of a real bearing. Swapping in a real DAQ path changes only the adapter's input view, never the network.</p>
+</div>
+<h2>Platform contract</h2>
+<table>
+<tr><th>Input (adapter view)</th><td>1024-sample vibration waveform windows - surrogates synthesised from bearing_vib_rms_mm_s and flagged vibration_is_surrogate=True</td></tr>
+<tr><th>Output</th><td>prediction + probability over healthy / bearing_wear / imbalance / other</td></tr>
+<tr><th>Record format</th><td><code>wt-pm.platform.v1</code></td></tr>
+<tr><th>Typical latency</th><td>6000 ms</td></tr>
+<tr><th>Deployment targets</th><td>cloud, edge_gpu</td></tr>
+<tr><th>Requirements</th><td>tensorflow</td></tr>
+<tr><th>Fallback</th><td>m11-xgboost-tabular</td></tr>
+<tr><th>Subsystem focus</th><td>drivetrain</td></tr>
+<tr><th>Hermes tool</th><td><code>diagnose</code></td></tr>
+</table>
+<p class="note">Records follow the shared <code>WTDataSchema</code> (<code>wt-pm.platform.v1</code>). Only <code>timestamp</code>, <code>turbine_id</code> and <code>model_id</code> are required; absence is distinguishable from a zero.</p>
+<h2>Platform layers</h2>
+<table>
+<tr><th>Fusion</th><td>Drivetrain fault voter in the classification fusion - a softmax vote, not a score threshold</td></tr>
+<tr><th>Hermes</th><td>Feeds the diagnose tool: turns an anomaly into a named failure mode and a subsystem (WHERE)</td></tr>
+<tr><th>XAI</th><td>Its alert is explained by m21 SHAP over the tabular features plus a contrastive healthy-band comparison</td></tr>
+<tr><th>Protocol</th><td>Trains only on windows fully inside train_mask - no window is allowed to straddle a held-out row</td></tr>
+</table>
+<h2>How it connects to the other 24</h2>
+<ul class="edges">
+<li><b>19. SNN Event Vibration</b> <span class="note">(m07-snn-vibration)</span> &rarr; vibration event spikes for the bearing CNN</li>
+<li><b>17. Quantized MobileNet Edge</b> <span class="note">(m24-quantized-edge)</span> &rarr; edge-quantized high-frequency features</li>
+<li><b>03. Contrastive SSL Vibration</b> <span class="note">(m08-contrastive-ssl)</span> &rarr; SSL representations for the bearing classifier</li>
+<li>&rarr; <b>04. ConvLSTM Wear Prognostics</b> <span class="note">(m02-convlstm-wear)</span> - bearing fault labels drive wear tracking</li>
+<li>&rarr; <b>24. XAI SHAP Interpretable</b> <span class="note">(m21-xai-shap)</span> - vibration alert explanations</li>
+</ul>
+<h2>Honest limits</h2><ul class="limits">
+<li>Surrogate waveforms, not field DAQ - vibration_is_surrogate=True on every record</li>
+<li>Metrics are held-out simulator records (fidelity rung 1), not certified asset performance</li>
+</ul>
+<p class="note">Fidelity: rung 1 of the fidelity ladder - simulator data, surrogate waveforms where stated, proxy RUL targets, simulator fault labels. Comparable within this collection, not field-validated turbine control.</p>
+<h2>Run it</h2>
+<pre>pip install -r requirements.txt
+python model.py
+
+# inside the unified platform
+pip install "git+https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly.git#subdirectory=platform"
+wt-pm fetch-models --dir ./external
+export WTPM_EXTERNAL_DIR=$PWD/external
+wt-pm inspect      # m01-1dcnn-bearing should report available
+wt-pm serve --port 8100</pre>
+<h2>All 25 pages</h2>
+<p class="note">Every repository in the collection, with the number printed on its own page and the adapter id the registry uses.</p>
+<div class="grid fleet">
+<a class="here" href="https://github.com/rajaram-2005/wt-pm-1d-cnn-bearing-vibration"><b>01 &middot; 1D-CNN Bearing Vibration</b><span>m01-1dcnn-bearing &middot; Component Fault Classification</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-aerozip-autoencoder-compressor"><b>02 &middot; AeroZip Autoencoder Compressor</b><span>m23-aerozip &middot; Edge AI</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-contrastive-ssl-vibration"><b>03 &middot; Contrastive SSL Vibration</b><span>m08-contrastive-ssl &middot; Component Fault Classification</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-convlstm-wear-prognostics"><b>04 &middot; ConvLSTM Wear Prognostics</b><span>m02-convlstm-wear &middot; RUL Prognostics</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-dbn-feature-extraction"><b>05 &middot; DBN Feature Extraction</b><span>m09-dbn-features &middot; RUL Prognostics</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-deep-svdd-boundary"><b>06 &middot; Deep SVDD Boundary</b><span>m13-deep-svdd &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-digital-twin-surrogate"><b>07 &middot; Digital Twin Surrogate</b><span>m19-digital-twin &middot; Physics-Informed &amp; Explainable</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-gnn-turbines-cascade"><b>08 &middot; GNN Turbine Cascade</b><span>m20-gnn-cascade &middot; Component Fault Classification</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-gru-scada-telemetry"><b>09 &middot; GRU SCADA Telemetry</b><span>m04-gru-scada-telemetry &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-hmm-degradation-states"><b>10 &middot; HMM Degradation States</b><span>m15-hmm-degradation &middot; RUL Prognostics</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-informer-long-sequence"><b>11 &middot; Informer Long Sequence</b><span>m06-informer-forecast &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-isolation-forest-telemetry"><b>12 &middot; Isolation Forest Telemetry</b><span>m14-isolation-forest &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly"><b>13 &middot; LSTM SCADA Anomaly (reference contract hub)</b><span>m05-lstm-scada-anomaly &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-mlp-rul-regression"><b>14 &middot; MLP RUL Regression</b><span>m17-mlp-rul &middot; RUL Prognostics</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-particle-filter-rul"><b>15 &middot; Particle Filter RUL</b><span>m16-particle-filter-rul &middot; RUL Prognostics</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-pg-bnn-wind-turbine"><b>16 &middot; PG-BNN Physics-Guided Bayesian</b><span>m18-pg-bnn &middot; Physics-Informed &amp; Explainable</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-quantized-mobilenet-edge"><b>17 &middot; Quantized MobileNet Edge</b><span>m24-quantized-edge &middot; Edge AI</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-random-forest-telemetry"><b>18 &middot; Random Forest Telemetry</b><span>m10-random-forest &middot; Component Fault Classification</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-snn-event-vibration"><b>19 &middot; SNN Event Vibration</b><span>m07-snn-vibration &middot; Edge AI</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-svm-rbf-generator-stator"><b>20 &middot; SVM-RBF Generator Stator</b><span>m12-svm-generator &middot; Component Fault Classification</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-tcn-power-curve"><b>21 &middot; TCN Power Curve</b><span>m03-tcn-power-curve &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-tinyml-esp32-safety-relay"><b>22 &middot; TinyML ESP32 Safety Relay</b><span>m25-tinyml-safety &middot; Edge AI</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-vae-reconstruction-loss"><b>23 &middot; VAE Reconstruction Loss</b><span>m22-vae-reconstruction &middot; SCADA Anomaly Detection</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-xai-shap-interpretable"><b>24 &middot; XAI SHAP Interpretable</b><span>m21-xai-shap &middot; Physics-Informed &amp; Explainable</span></a>
+<a class="" href="https://github.com/rajaram-2005/wt-pm-xgboost-tabular-faults"><b>25 &middot; XGBoost Tabular Faults</b><span>m11-xgboost-tabular &middot; Component Fault Classification</span></a>
+</div>
+<footer>
+<p>Model 01 of 25 &middot; adapter <code>m01-1dcnn-bearing</code> &middot; Component Fault Classification &middot; status integrated (surrogate waveforms)</p>
+<p><a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly/blob/main/platform/docs/MODELS.md">Per-model table</a> &middot; <a href="https://rajaram-2005.github.io/wt-pm-lstm-scada-anomaly/ecosystem.html">Ecosystem graph</a> &middot; <a href="https://github.com/rajaram-2005/wt-pm-lstm-scada-anomaly">Reference repository</a></p>
+<p>Generated from <code>deployment/models.catalog.json</code>. Research demo - not field-validated turbine control.</p>
+</footer>
+</div></body></html>
